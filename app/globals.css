@@ -1,0 +1,711 @@
+/* Importation d'une police technique (optionnelle) */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&display=swap');
+
+:root {
+  /* --- PALETTE DE COULEURS DE BASE (SOMBRE) --- */
+  --bg-primary: #121212; /* Fond d'écran global (très sombre) */
+  --bg-secondary: #1a1a1a; /* Panneaux et cartes sombres */
+  --text-primary: #e0e0e0; /* Texte technique par défaut */
+  --text-secondary: #a0a0a0; /* Texte gris technique */
+  --accent: #f0f0f0; /* Accentuation claire */
+  --border: #333333; /* Bordures fines */
+
+  /* --- NOUVELLES VARIABLES NASA/BRUT (FOND ET ALERTE) --- */
+  --bg-cream: #f8f1e0; /* Blanc-crème doux mais brut */
+  --accent-red: #ff5233; /* Un rouge d'alerte vif (pure énergie NASA/Terminal) */
+  --text-dark: #121212; /* Pour le texte sur fond crème */
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary); /* Le fond d'écran reste sombre */
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; 
+  font-weight: 300;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  all: unset;
+  cursor: pointer;
+}
+
+/* Utilitaires minimalistes */
+.border-thin { border: 1px solid var(--border); }
+
+/* --- MISE À JOUR MAJEURE DE L'ACCUEIL --- */
+.main-layout {
+  max-width: 1400px;
+  margin: 2rem auto;
+  padding: 1rem;
+  
+  /* --- AJOUT DU FOND BLANC-CRÈME SUR LE CADRE PRINCIPAL --- */
+  background-color: var(--bg-cream);
+  color: var(--text-dark); /* Inverser le texte par défaut sur cette zone */
+  border-radius: 0; /* Éliminer les arrondis */
+  border: 2px solid var(--border); /* Rendre la bordure plus présente */
+  box-shadow: 1px 1px 0 var(--border); /* Un effet "brutal" d'ombre portée solide */
+}
+
+/* Les titres internes doivent rester techniques mais lisibles sur crème */
+.main-layout h1, .main-layout h2 {
+  color: var(--text-dark); /* Texte sombre sur fond crème */
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.main-layout h1 { font-size: 1.5rem; }
+.main-layout h2 { font-size: 1.25rem; }
+
+.main-layout .subtitle, .main-layout .timestamp {
+  color: color-mix(in srgb, var(--text-dark) 70%, white); /* Un gris technique sur crème */
+  font-size: 0.875rem;
+  text-transform: uppercase;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem; /* Espace après le header */
+}
+
+/* Assurer que les éléments internes de la page utilisent les bonnes flex box */
+.flex-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+/* --- MISE À JOUR DES CARTES DE SÉLECTION --- */
+.project-panel, .create-project-panel {
+  height: 200px;
+  border-radius: 0; /* Toujours pas d'arrondis pour le look brutal */
+  transition: all 0.2s ease; /* Transition sur TOUT (couleur, fond, bordure) */
+  cursor: pointer;
+  border: 1px solid var(--border);
+  
+  /* Les panneaux de projet doivent rester SOMBRES par défaut pour se détacher */
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+/* --- LE ROUGE HACHURÉ AU SURVOL (BRUTALIST HOVER) --- */
+.project-panel:hover, .create-project-panel:hover {
+  opacity: 1; /* Retirer l'opacité réduite */
+  border-color: var(--accent-red); /* Bordure rouge d'alerte */
+  color: var(--accent-red); /* Texte interne rouge d'alerte */
+
+  /* CRÉATION DU MOTIF HACHURÉ EN CSS */
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    color-mix(in srgb, var(--accent-red) 15%, transparent) 10px,
+    color-mix(in srgb, var(--accent-red) 15%, transparent) 20px
+  );
+  box-shadow: 0 0 15px color-mix(in srgb, var(--accent-red) 30%, transparent); /* Un léger "bloom" */
+}
+
+/* Assurer que les éléments spécifiques de la carte de création s'adaptent au hover */
+.create-project-panel .plus {
+  font-size: 3rem;
+  font-weight: 300;
+  color: var(--accent); /* Accent clair par défaut */
+  margin-bottom: 0.5rem;
+}
+
+.create-project-panel .label {
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.create-project-panel:hover .plus, .create-project-panel:hover .label {
+  color: var(--accent-red); /* Rouge d'alerte au survol */
+}
+
+.create-project-panel {
+  opacity: 0.9; /* Légère opacité réduite pour la carte de création par défaut */
+}
+
+/* Éléments internes de la carte de projet existante */
+.card-count {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  border-radius: 0;
+  /* Laisser le décompte sombre pour qu'il reste technique */
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.project-panel:hover .card-count {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+/* Forcer le header principal en sombre */
+.home-header h1, 
+.home-header .subtitle {
+  color: var(--text-dark) !important;
+}
+
+/* Forcer les textes des cartes en clair */
+.project-panel h2,
+.project-panel .timestamp,
+.card-count {
+  color: var(--bg-cream) !important;
+}
+
+/* Rouge au survol des cartes */
+.project-panel:hover h2,
+.project-panel:hover .card-count,
+.project-panel:hover .timestamp {
+  color: var(--accent-red) !important;
+}
+
+/* --- SYSTÈME DE POP-UP (MODAL) --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(18, 18, 18, 0.5);
+  backdrop-filter: blur(8px); /* L'effet flou sur le fond */
+  z-index: 100;
+  animation: fadeIn 0.1s ease-out; /* Transition ultra rapide */
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 450px;
+  background-color: var(--bg-primary);
+  border: 2px solid var(--accent); /* Contour clair */
+  box-shadow: 10px 10px 0 var(--border); /* Ombre dure brutale */
+  animation: slideUp 0.1s ease-out;
+}
+
+.modal-title {
+  color: var(--accent-red);
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+/* Input text SF */
+.tech-input {
+  width: 100%;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 0.75rem;
+  font-family: inherit;
+  outline: none;
+  text-transform: uppercase;
+  transition: all 0.2s;
+}
+
+.tech-input:focus {
+  border-color: var(--accent-red);
+  background-image: repeating-linear-gradient(
+    45deg, transparent, transparent 10px,
+    color-mix(in srgb, var(--accent-red) 5%, transparent) 10px,
+    color-mix(in srgb, var(--accent-red) 5%, transparent) 20px
+  );
+}
+
+/* Boutons de la pop-up */
+.btn-cancel, .btn-confirm {
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  flex: 1;
+  text-align: center;
+  border: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+
+.btn-cancel { color: var(--text-secondary); }
+.btn-cancel:hover { background-color: var(--bg-secondary); color: var(--text-primary); }
+
+.btn-confirm { color: var(--bg-primary); background-color: var(--accent); }
+.btn-confirm:hover { background-color: var(--accent-red); border-color: var(--accent-red); color: white; }
+
+.mb-4 { margin-bottom: 1rem; }
+
+/* Animations Rapides */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.nav-link {
+  font-weight: 700;
+  color: var(--text-dark);
+  transition: color 0.2s;
+}
+.nav-link:hover { color: var(--accent-red); }
+
+.project-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 1rem;
+}
+
+/* --- INTERACTIONS DU TABLEAU DE DONNÉES --- */
+
+/* Cellule de base */
+.data-cell {
+  position: relative;
+  border-right: 1px solid var(--border);
+  transition: all 0.1s ease;
+}
+
+/* Hover rouge sur la cellule */
+.data-cell:hover {
+  background-color: color-mix(in srgb, var(--accent-red) 5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-red);
+}
+
+/* Mode Édition (Focus sur l'input) : Hachures rouges */
+.data-cell input:focus {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    color-mix(in srgb, var(--accent-red) 10%, transparent) 10px,
+    color-mix(in srgb, var(--accent-red) 10%, transparent) 20px
+  );
+  outline: none;
+  background-color: var(--bg-primary);
+}
+
+/* Bouton de suppression discret */
+.btn-delete-small {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.4rem;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
+.btn-delete-small:hover {
+  opacity: 1;
+  color: var(--accent-red);
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+}
+
+/* --- OUTILS & ERGONOMIE --- */
+
+/* Poignée de déplacement (Drag Grip) */
+.drag-grip {
+  cursor: grab;
+  color: var(--text-secondary);
+  margin-right: 0.5rem;
+  user-select: none;
+}
+.drag-grip:active { cursor: grabbing; }
+
+/* Colonne en cours de déplacement */
+.is-dragging {
+  opacity: 0.3;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent, transparent 5px,
+    var(--border) 5px, var(--border) 10px
+  );
+}
+
+/* --- MENU CONTEXTUEL (CLIC DROIT) --- */
+.context-menu {
+  position: fixed;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--accent);
+  box-shadow: 5px 5px 0 var(--border);
+  z-index: 1000;
+  min-width: 200px;
+  animation: fadeIn 0.05s ease-out;
+}
+
+.context-menu-item {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  transition: all 0.1s;
+}
+
+.context-menu-item:last-child { border-bottom: none; }
+
+.context-menu-item:hover {
+  background-color: var(--bg-secondary);
+  color: var(--accent-red);
+  padding-left: 1.5rem; /* Petit effet de décalage tech */
+}
+
+/* --- SÉPARATEURS DU MENU CONTEXTUEL --- */
+.context-menu-label {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  padding: 0.5rem 1rem 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background-color: var(--border);
+  margin: 0.25rem 0;
+}
+
+/* --- SÉLECTION DE CELLULES --- */
+.data-cell.selected {
+  background-color: color-mix(in srgb, var(--accent-red) 15%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-red);
+}
+
+/* --- SÉLECTION AU CLIC-GLISSÉ --- */
+/* Quand le tableau est en mode sélection, on bloque la sélection de texte native */
+.table-container.is-selecting {
+  user-select: none;
+}
+
+/* On désactive les inputs pendant le glissé pour que la souris détecte bien les cellules (td) */
+.table-container.is-selecting input {
+  pointer-events: none;
+}
+
+/* Un petit feedback visuel sur le titre des colonnes */
+.col-header-title {
+  cursor: pointer;
+}
+.col-header-title:hover {
+  color: var(--accent-red);
+}
+
+/* --- POIGNÉES DE LIGNE (ROW GRIP) --- */
+.row-grip-cell {
+  width: 30px;
+  text-align: center;
+  cursor: grab;
+  color: color-mix(in srgb, var(--text-secondary) 50%, transparent);
+  border-right: 1px solid var(--border);
+  background-color: var(--bg-secondary); /* Fond légèrement différent pour séparer des données */
+  user-select: none;
+  transition: all 0.2s;
+}
+
+.row-grip-cell:active { cursor: grabbing; }
+
+.row-grip-cell:hover {
+  color: var(--accent-red);
+  background-color: var(--bg-primary);
+}
+
+.row-is-dragging {
+  opacity: 0.4;
+  background-color: var(--border) !important;
+}
+
+/* --- ÉTAT SÉLECTIONNÉ DE LA POIGNÉE --- */
+.row-grip-cell.selected-grip {
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border-left: 2px solid var(--accent); /* Petite barre visuelle à gauche */
+}
+
+/* --- POIGNÉE DE RECOPIE (FILL HANDLE EXCEL) --- */
+.fill-handle {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent-red);
+  border: 1px solid var(--bg-primary);
+  cursor: crosshair;
+  z-index: 10;
+  transition: transform 0.1s;
+}
+
+.fill-handle:hover {
+  transform: scale(1.5);
+}
+
+/* Cellules ciblées par le glissement de la poignée */
+.fill-target {
+  background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--accent-red) !important;
+}
+
+/* --- ONGLETS MULTI-TABLEAUX --- */
+.dataset-tabs-container {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+}
+
+.dataset-tab {
+  padding: 0.5rem 1rem;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.dataset-tab:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.dataset-tab.active {
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  /* Un effet d'enfoncement brutalist */
+  box-shadow: inset 0 -4px 0 var(--accent-red);
+}
+
+/* --- ANIMATION GLISSEMENT / AGRANDISSEMENT --- */
+@keyframes slideExpand {
+  0% { 
+    opacity: 0; 
+    transform: translateX(-20px) scale(0.97); 
+  }
+  100% { 
+    opacity: 1; 
+    transform: translateX(0) scale(1); 
+  }
+}
+
+.animate-table-switch {
+  animation: slideExpand 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  transform-origin: top left;
+}
+
+/* --- VUE MOSAÏQUE DES TABLEAUX --- */
+.dataset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.dataset-card {
+  height: 150px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  position: relative;
+}
+
+.dataset-card h3 {
+  color: var(--text-primary);
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  transition: color 0.2s;
+}
+
+.dataset-card .stats {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.dataset-card:hover {
+  border-color: var(--accent-red);
+  background-image: repeating-linear-gradient(
+    45deg, transparent, transparent 10px,
+    color-mix(in srgb, var(--accent-red) 5%, transparent) 10px,
+    color-mix(in srgb, var(--accent-red) 5%, transparent) 20px
+  );
+}
+
+.dataset-card:hover h3, .dataset-card:hover .stats {
+  color: var(--accent-red);
+}
+
+.dataset-card-add {
+  border: 1px dashed var(--border);
+}
+
+.dataset-card-add:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  background-image: none;
+}
+.dataset-card-add:hover h3 { color: var(--accent); }
+
+/* --- ASSET STORE RETRACTABLE --- */
+.asset-store-panel {
+  width: 350px;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), padding 0.3s;
+  overflow: hidden;
+  position: relative;
+}
+
+.asset-store-panel.collapsed {
+  width: 40px; /* Juste assez pour afficher la barre latérale */
+  padding: 0;
+  cursor: pointer;
+}
+
+.asset-store-panel.collapsed:hover {
+  background-color: color-mix(in srgb, var(--accent-red) 10%, var(--bg-secondary));
+}
+
+.store-toggle-btn {
+  position: absolute;
+  top: 1rem;
+  left: -15px; /* Dépasse un peu sur le panneau principal */
+  width: 30px;
+  height: 30px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 100;
+  transition: all 0.2s;
+}
+
+.store-toggle-btn:hover {
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+}
+
+/* --- ICÔNES (CONTRASTE ET FAVORIS) --- */
+.icon-card {
+  aspect-ratio: 1/1;
+  background-color: #fc4811; /* Fond blanc forcé pour contraster les SVG noirs */
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  position: relative;
+  transition: all 0.1s;
+}
+
+.icon-card:hover {
+  border-color: var(--accent-red);
+  transform: scale(1.05);
+  z-index: 10;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+}
+
+.icon-card img {
+  width: 65%;
+  height: 65%;
+  object-fit: contain;
+  /* On n'inverse plus les couleurs puisque le fond est blanc */
+  pointer-events: none; 
+}
+
+/* Le petit bouton pour sauvegarder l'icône */
+.save-icon-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.icon-card:hover .save-icon-btn {
+  opacity: 1;
+}
+
+.save-icon-btn:hover {
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+}
+
+/* Si l'icône est déjà sauvegardée */
+.icon-card.is-saved {
+  border-color: var(--accent-red);
+}
+.icon-card.is-saved .save-icon-btn {
+  opacity: 1;
+  color: var(--accent-red);
+  background: color-mix(in srgb, var(--accent-red) 10%, var(--bg-primary));
+}
+
+/* --- SCROLLBARS CONSOLE --- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-secondary);
+  border: 2px solid var(--bg-secondary); /* Crée un effet de marge interne */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-red);
+}
+
+/* Pour Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-red) var(--bg-secondary);
+}
