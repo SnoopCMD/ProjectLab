@@ -99,8 +99,20 @@ export default function DataTab() {
       if (!projectSlug) return;
       setIsLoading(true);
 
-      const { data: projectData, error: projectError } = await supabase.from('projects').select('id, columns_schema').eq('slug', projectSlug).single();
-      if (projectError || !projectData) { setIsLoading(false); return; }
+      const decodedSlug = decodeURIComponent(projectSlug);
+      const { data, error: projectError } = await supabase
+        .from('projects')
+        .select('id, columns_schema')
+        .eq('slug', decodedSlug)
+        .limit(1);
+      
+      const projectData = data?.[0]; // On prend le premier résultat de façon sécurisée
+
+      if (projectError || !projectData) { 
+        console.error("Erreur de chargement:", projectError);
+        setIsLoading(false); 
+        return; 
+      }
       setProjectId(projectData.id);
       
       let loadedDatasets = [{ id: 'default', name: 'Set Principal' }];
@@ -152,16 +164,26 @@ export default function DataTab() {
     const columnsByDataset: Record<string, Column[]> = {};
     datasets.forEach(ds => { columnsByDataset[ds.id] = finalDataStore[ds.id]?.columns || defaultColumns; });
 
-    await supabase.from('projects').update({ columns_schema: { datasets, columnsByDataset } }).eq('id', projectId);
-    await supabase.from('cards').delete().eq('project_id', projectId);
+    // 1. Sauvegarde du schéma
+    const { error: errProj } = await supabase.from('projects').update({ columns_schema: { datasets, columnsByDataset } }).eq('id', projectId);
+    if (errProj) console.error("❌ Erreur projet:", errProj);
+
+    // 2. Suppression des anciennes cartes
+    const { error: errDel } = await supabase.from('cards').delete().eq('project_id', projectId);
+    if (errDel) console.error("❌ Erreur suppression:", errDel);
     
+    // 3. Insertion des nouvelles cartes
     const cardsToInsert: any[] = [];
     datasets.forEach(ds => {
       const dsRows = finalDataStore[ds.id]?.rows || [];
       dsRows.forEach((row, index) => { cardsToInsert.push({ project_id: projectId, dataset_id: ds.id, row_order: index, data: row }); });
     });
 
-    if (cardsToInsert.length > 0) await supabase.from('cards').insert(cardsToInsert);
+    if (cardsToInsert.length > 0) {
+      const { error: errIns } = await supabase.from('cards').insert(cardsToInsert);
+      if (errIns) console.error("❌ Erreur insertion:", errIns);
+    }
+    
     setIsSaving(false); setHasChanges(false);
   };
 

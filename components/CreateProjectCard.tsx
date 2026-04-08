@@ -14,7 +14,8 @@ export default function CreateProjectCard() {
     if (!projectName.trim() || loading) return;
 
     setLoading(true);
-    const slug = projectName.toLowerCase().replace(/\s+/g, '-');
+    const uniqueSuffix = Math.random().toString(36).substring(2, 6);
+    const slug = `${projectName.toLowerCase().replace(/\s+/g, '-')}-${uniqueSuffix}`;
 
     // Insertion dans Supabase
     const { error } = await supabase

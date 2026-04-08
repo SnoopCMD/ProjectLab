@@ -45,6 +45,7 @@ interface TemplateLayer {
 
 interface Template {
   id: string; name: string; dataset_id: string; layers: TemplateLayer[]; db_id?: string;
+  width?: number; height?: number;
 }
 interface Dataset { id: string; name: string; }
 interface Column { id: string; name: string; type: string; }
@@ -68,6 +69,7 @@ export default function TemplateEditorTab() {
   const [previewRows, setPreviewRows] = useState<Record<string, any>>({});
 
   const [layers, setLayers] = useState<TemplateLayer[]>([]);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   
   // MULTI-SÉLECTION
   const [activeLayerIds, setActiveLayerIds] = useState<string[]>([]);
@@ -103,8 +105,20 @@ export default function TemplateEditorTab() {
       if (!projectSlug) return;
       setIsLoading(true);
 
-      const { data: projectData, error: projectError } = await supabase.from('projects').select('id, columns_schema, saved_assets').eq('slug', projectSlug).single();
-      if (projectError || !projectData) { setIsLoading(false); return; }
+      const decodedSlug = decodeURIComponent(projectSlug);
+      const { data, error: projectError } = await supabase
+        .from('projects')
+        .select('id, columns_schema, saved_assets')
+        .eq('slug', decodedSlug)
+        .limit(1);
+        
+      const projectData = data?.[0];
+
+      if (projectError || !projectData) { 
+        console.error("Erreur de chargement:", projectError);
+        setIsLoading(false); 
+        return; 
+      }
       setProjectId(projectData.id);
 
       if (projectData.saved_assets && Array.isArray(projectData.saved_assets)) setSavedIcons(projectData.saved_assets);
@@ -162,6 +176,7 @@ export default function TemplateEditorTab() {
   const saveToDatabase = async () => {
     if (!projectId || !activeTemplateId) return;
     setIsSaving(true);
+    
     const updatedTemplates = templates.map(t => t.id === activeTemplateId ? { ...t, layers: layers } : t);
     setTemplates(updatedTemplates);
 
@@ -170,16 +185,37 @@ export default function TemplateEditorTab() {
     setTemplateStore(finalDataStore);
 
     try {
-      await supabase.from('projects').update({ saved_assets: savedIcons }).eq('id', projectId);
+      // 1. Sauvegarde du projet (assets)
+      const { error: projErr } = await supabase.from('projects').update({ saved_assets: savedIcons }).eq('id', projectId);
+      if (projErr) {
+        console.error("Erreur Projet:", projErr);
+        alert("Erreur sauvegarde projet : " + projErr.message);
+      }
+
+      // 2. Sauvegarde des gabarits
       for (const tpl of updatedTemplates) {
-        if (tpl.db_id) await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).eq('id', tpl.db_id);
-        else {
-          const { data } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).select().single();
+        if (tpl.db_id) {
+          const { error: updErr } = await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).eq('id', tpl.db_id);
+          if (updErr) {
+            console.error("Erreur Update Gabarit:", updErr);
+            alert("Erreur de mise à jour du gabarit : " + updErr.message);
+          }
+        } else {
+          const { data, error: insErr } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).select().single();
+          if (insErr) {
+            console.error("Erreur Insert Gabarit:", insErr);
+            alert("Erreur de création du gabarit : " + insErr.message);
+          }
           if (data) tpl.db_id = data.id;
         }
       }
       setHasChanges(false);
-    } catch (e) {} finally { setIsSaving(false); }
+    } catch (e) {
+      console.error("Erreur inattendue:", e);
+      alert("Une erreur inattendue s'est produite.");
+    } finally { 
+      setIsSaving(false); 
+    }
   };
 
   const pushHistory = (newLayers: TemplateLayer[]) => {
@@ -274,11 +310,15 @@ export default function TemplateEditorTab() {
     else setHasChanges(true);
   };
   
-  const addLayer = () => {
+  const addLayer = (type: LayerType) => {
+    const isShape = type === 'shape';
     const newLayer: TemplateLayer = { 
-      id: 'l_' + Date.now(), name: `Nouveau Texte`, type: 'text', 
-      isVisible: true, isLocked: false, x: 20, y: 20, width: 260, height: 30, 
-      content: 'NOUVEAU TEXTE', color: '#000000', sourceType: 'static', columnId: '', textAlign: 'center' 
+      id: 'l_' + Date.now(), name: `Nouveau ${type}`, type, 
+      isVisible: true, isLocked: false, x: 20, y: 20, 
+      width: isShape ? 100 : 260, height: isShape ? 100 : 30, 
+      content: type === 'text' ? 'TEXTE' : '', 
+      color: isShape ? '#cccccc' : '#000000', 
+      sourceType: 'static', columnId: '', textAlign: 'center' 
     };
     pushHistory([newLayer, ...layers]); 
     setActiveLayerIds([newLayer.id]);
@@ -396,10 +436,32 @@ export default function TemplateEditorTab() {
     if (dragInfo) {
       const dx = e.clientX - dragInfo.initialMouseX;
       const dy = e.clientY - dragInfo.initialMouseY;
+      const tplW = currentTemplate?.width || 300;
+      const tplH = currentTemplate?.height || 420;
+
       const newLayers = [...layers];
       dragInfo.layers.forEach(dragged => {
         const idx = newLayers.findIndex(l => l.id === dragged.id);
-        if (idx > -1) newLayers[idx] = { ...newLayers[idx], x: Math.round(dragged.startX + dx), y: Math.round(dragged.startY + dy) };
+        if (idx > -1) {
+          let nx = dragged.startX + dx;
+          let ny = dragged.startY + dy;
+
+          if (snapEnabled) {
+            // Grille de 10px
+            nx = Math.round(nx / 10) * 10;
+            ny = Math.round(ny / 10) * 10;
+            const cw = newLayers[idx].width; const ch = newLayers[idx].height;
+            // Magnétisme Centre
+            if (Math.abs(nx - (tplW / 2 - cw / 2)) < 15) nx = tplW / 2 - cw / 2;
+            if (Math.abs(ny - (tplH / 2 - ch / 2)) < 15) ny = tplH / 2 - ch / 2;
+            // Magnétisme Bords
+            if (Math.abs(nx) < 10) nx = 0;
+            if (Math.abs(nx + cw - tplW) < 10) nx = tplW - cw;
+            if (Math.abs(ny) < 10) ny = 0;
+            if (Math.abs(ny + ch - tplH) < 10) ny = tplH - ch;
+          }
+          newLayers[idx] = { ...newLayers[idx], x: nx, y: ny };
+        }
       });
       setLayers(newLayers);
       return;
@@ -575,12 +637,30 @@ export default function TemplateEditorTab() {
               {/* --- CANVAS (PREND TOUT L'ESPACE DISPONIBLE) --- */}
               <div className="panel border-thin" style={{ flex: 1, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
                 
-                <div className="flex-between mb-4" style={{ padding: '0 0.5rem' }}>
+                <div className="flex-between mb-4" style={{ padding: '0 0.5rem', flexWrap: 'wrap', gap: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <h3 style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.9rem' }}><Txt>Source de données</Txt> :</h3>
+                    <h3 style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.9rem' }}><Txt>Source</Txt> :</h3>
                     <select className="tech-input" style={{ width: 'auto', padding: '0.3rem', fontSize: '0.8rem' }} value={currentTemplate?.dataset_id || ''} onChange={(e) => linkDataset(e.target.value)}>
                       {datasets.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <h3 style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.9rem' }}><Txt>Format</Txt> :</h3>
+                    <select className="tech-input" style={{ width: 'auto', padding: '0.3rem', fontSize: '0.8rem' }} value={`${currentTemplate?.width || 300}x${currentTemplate?.height || 420}`} onChange={(e) => {
+                      const [w, h] = e.target.value.split('x').map(Number);
+                      setTemplates(templates.map(t => t.id === activeTemplateId ? { ...t, width: w, height: h } : t));
+                      setHasChanges(true);
+                    }}>
+                      <option value="300x420">Standard (300x420)</option>
+                      <option value="350x500">Poker (350x500)</option>
+                      <option value="250x250">Carré (250x250)</option>
+                      <option value="420x300">Paysage (420x300)</option>
+                    </select>
+
+                    <button onClick={() => setSnapEnabled(!snapEnabled)} style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid var(--border)', background: snapEnabled ? 'var(--accent-red)' : 'transparent', color: snapEnabled ? '#fff' : 'var(--text-secondary)' }}>
+                      {snapEnabled ? '[ MAGNÉTISME ON ]' : '[ MAGNÉTISME OFF ]'}
+                    </button>
                   </div>
                 </div>
                 
@@ -592,7 +672,7 @@ export default function TemplateEditorTab() {
                   <div 
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleDropOnCanvas}
-                    style={{ width: '300px', height: '420px', backgroundColor: '#fff', boxShadow: '0 20px 50px rgba(0,0,0,0.8)', position: 'relative', overflow: 'hidden' }}
+                    style={{ width: `${currentTemplate?.width || 300}px`, height: `${currentTemplate?.height || 420}px`, backgroundColor: '#fff', boxShadow: '0 20px 50px rgba(0,0,0,0.8)', position: 'relative', overflow: 'hidden' }}
                   >
                     
                     {[...layers].reverse().map((layer, index) => {
@@ -640,10 +720,13 @@ export default function TemplateEditorTab() {
                 
                 {/* Haut : Calques */}
                 <div style={{ display: 'flex', flexDirection: 'column', height: '40%', borderBottom: '2px solid var(--border)' }}>
-                  <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}><Txt>Pile de calques</Txt></h3>
-                    <button onClick={addLayer} className="btn-cancel" style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}>+ AJOUTER</button>
-                  </div>
+                  <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}><Txt>Pile de calques</Txt></h3>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button onClick={() => addLayer('text')} className="btn-cancel" style={{ flex: 1, padding: '0.2rem', fontSize: '0.7rem' }}>+ TEXTE</button>
+                        <button onClick={() => addLayer('shape')} className="btn-cancel" style={{ flex: 1, padding: '0.2rem', fontSize: '0.7rem' }}>+ FORME</button>
+                      </div>
+                    </div>
                   <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem' }}>
                     {layers.map((layer, index) => {
                       const isSelected = activeLayerIds.includes(layer.id);
