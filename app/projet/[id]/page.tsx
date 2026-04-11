@@ -38,7 +38,8 @@ interface TemplateLayer {
   content: string; color: string;
   sourceType: SourceType; 
   columnId: string;       
-  textAlign?: TextAlign; 
+  textAlign?: TextAlign;
+  fontSize?: number;
   aspectLocked?: boolean;
   groupId?: string;
 }
@@ -66,6 +67,8 @@ export default function TemplateEditorTab() {
   const [templateStore, setTemplateStore] = useState<Record<string, Template>>({});
 
   const [columnsByDataset, setColumnsByDataset] = useState<Record<string, Column[]>>({});
+  const [allRowsByDataset, setAllRowsByDataset] = useState<Record<string, any[]>>({});
+  const [previewRowIndex, setPreviewRowIndex] = useState<Record<string, number>>({});
   const [previewRows, setPreviewRows] = useState<Record<string, any>>({});
 
   const [layers, setLayers] = useState<TemplateLayer[]>([]);
@@ -133,14 +136,18 @@ export default function TemplateEditorTab() {
       setDatasets(loadedDatasets);
       setColumnsByDataset(loadedColumns);
 
-      const { data: cardsData } = await supabase.from('cards').select('*').eq('project_id', projectData.id);
+      const { data: cardsData } = await supabase.from('cards').select('*').eq('project_id', projectData.id).order('row_order');
       const pRows: Record<string, any> = {};
+      const allRows: Record<string, any[]> = {};
       if (cardsData) {
         cardsData.forEach(card => {
           const dsId = card.dataset_id || 'default';
-          if (!pRows[dsId]) pRows[dsId] = card.data; 
+          if (!allRows[dsId]) allRows[dsId] = [];
+          allRows[dsId].push(card.data);
+          if (!pRows[dsId]) pRows[dsId] = card.data;
         });
       }
+      setAllRowsByDataset(allRows);
       setPreviewRows(pRows);
 
       const { data: templatesData } = await supabase.from('templates').select('*').eq('project_id', projectData.id);
@@ -149,8 +156,9 @@ export default function TemplateEditorTab() {
 
       if (templatesData && templatesData.length > 0) {
         loadedTemplates = templatesData.map(t => ({ 
-          db_id: t.id, id: `tpl_${t.id}`, name: t.name, dataset_id: t.dataset_id || loadedDatasets[0].id, 
-          layers: (t.layers || []).map((l: any) => ({ ...l, sourceType: l.sourceType || 'static', columnId: l.columnId || '', textAlign: l.textAlign || 'center', aspectLocked: !!l.aspectLocked, groupId: l.groupId })) 
+          db_id: t.id, id: `tpl_${t.id}`, name: t.name, dataset_id: t.dataset_id || loadedDatasets[0].id,
+          width: t.width || 300, height: t.height || 420,
+          layers: (t.layers || []).map((l: any) => ({ ...l, sourceType: l.sourceType || 'static', columnId: l.columnId || '', textAlign: l.textAlign || 'center', aspectLocked: !!l.aspectLocked, groupId: l.groupId }))
         }));
       } else {
         const defaultTpl: Template = {
@@ -195,13 +203,13 @@ export default function TemplateEditorTab() {
       // 2. Sauvegarde des gabarits
       for (const tpl of updatedTemplates) {
         if (tpl.db_id) {
-          const { error: updErr } = await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).eq('id', tpl.db_id);
+          const { error: updErr } = await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).eq('id', tpl.db_id);
           if (updErr) {
             console.error("Erreur Update Gabarit:", updErr);
             alert("Erreur de mise à jour du gabarit : " + updErr.message);
           }
         } else {
-          const { data, error: insErr } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).select().single();
+          const { data, error: insErr } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).select().single();
           if (insErr) {
             console.error("Erreur Insert Gabarit:", insErr);
             alert("Erreur de création du gabarit : " + insErr.message);
@@ -252,25 +260,62 @@ export default function TemplateEditorTab() {
     }
   };
 
-  const saveTemplateDetails = (e: React.FormEvent) => {
+  const saveSingleTemplate = async (tpl: Template): Promise<string | undefined> => {
+    if (!projectId) return;
+    if (tpl.db_id) {
+      await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).eq('id', tpl.db_id);
+      return tpl.db_id;
+    } else {
+      const { data } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).select().single();
+      return data?.id;
+    }
+  };
+
+  const saveTemplateDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tplFormName.trim()) return;
     if (tplModalMode === 'add') {
       const newId = 'tpl_' + Math.random().toString(36).substring(2, 9);
-      const newTpl: Template = { id: newId, name: tplFormName, dataset_id: datasets[0]?.id || 'default', layers: [] };
-      setTemplates([...templates, newTpl]);
+      const newTpl: Template = { id: newId, name: tplFormName, dataset_id: datasets[0]?.id || 'default', layers: [], width: 300, height: 420 };
+      const dbId = await saveSingleTemplate(newTpl);
+      if (dbId) newTpl.db_id = dbId;
+      setTemplates(prev => {
+        const updated = prev.map(t => t.id === activeTemplateId ? { ...t, layers } : t);
+        return [...updated, newTpl];
+      });
       setTemplateStore(prev => {
         const store = { ...prev, [newId]: newTpl };
         if (activeTemplateId) { const currentTpl = templates.find(t => t.id === activeTemplateId); if (currentTpl) store[activeTemplateId] = { ...currentTpl, layers }; }
         return store;
       });
-      setLayers([]); setActiveTemplateId(newId); setHistory([[]]); setHistoryIndex(0); setViewMode('editor'); 
-    } 
+      setLayers([]); setActiveTemplateId(newId); setHistory([[]]); setHistoryIndex(0); setViewMode('editor');
+    }
     else if (tplModalMode === 'edit' && activeTplToEdit) {
+      const tpl = templates.find(t => t.id === activeTplToEdit);
+      if (tpl) await saveSingleTemplate({ ...tpl, name: tplFormName });
       setTemplates(templates.map(t => t.id === activeTplToEdit ? { ...t, name: tplFormName } : t));
       setTemplateStore(prev => ({ ...prev, [activeTplToEdit]: { ...prev[activeTplToEdit], name: tplFormName } }));
     }
-    setHasChanges(true); setIsTplModalOpen(false); 
+    setIsTplModalOpen(false);
+  };
+
+  const duplicateTemplate = async (targetId: string) => {
+    const original = templates.find(t => t.id === targetId);
+    if (!original) return;
+    setContextMenu(null);
+    const newId = `tpl_${Date.now()}`;
+    const clonedLayers = JSON.parse(JSON.stringify(original.layers)).map((l: TemplateLayer) => ({ ...l, id: 'l_' + Date.now() + Math.random() }));
+    const newTpl: Template = { ...original, id: newId, name: `${original.name} Copie`, db_id: undefined, layers: clonedLayers };
+    const dbId = await saveSingleTemplate(newTpl);
+    if (dbId) newTpl.db_id = dbId;
+    setTemplates(prev => [...prev, newTpl]);
+    setTemplateStore(prev => ({ ...prev, [newId]: newTpl }));
+    setHasChanges(true);
+    // Ouvrir directement le renommage
+    setActiveTplToEdit(newId);
+    setTplFormName(newTpl.name);
+    setTplModalMode('edit');
+    setIsTplModalOpen(true);
   };
 
   const deleteTemplate = (targetId: string) => {
@@ -288,7 +333,11 @@ export default function TemplateEditorTab() {
 
   const linkDataset = (datasetId: string) => {
     if (!activeTemplateId) return;
-    setTemplates(templates.map(t => t.id === activeTemplateId ? { ...t, dataset_id: datasetId } : t)); setHasChanges(true);
+    const updated = templates.map(t => t.id === activeTemplateId ? { ...t, dataset_id: datasetId } : t);
+    setTemplates(updated);
+    const tpl = updated.find(t => t.id === activeTemplateId);
+    if (tpl) saveSingleTemplate({ ...tpl, layers });
+    setHasChanges(true);
   };
 
   // ==========================================
@@ -549,7 +598,17 @@ export default function TemplateEditorTab() {
 
   const currentTemplate = templates.find(t => t.id === activeTemplateId);
   const activeDatasetCols = columnsByDataset[currentTemplate?.dataset_id || 'default'] || [];
-  const previewData = previewRows[currentTemplate?.dataset_id || 'default'];
+  const activeDatasetId = currentTemplate?.dataset_id || 'default';
+  const allCardsForDataset = allRowsByDataset[activeDatasetId] || [];
+  const currentCardIndex = previewRowIndex[activeDatasetId] ?? 0;
+  const previewData = allCardsForDataset.length > 0 ? allCardsForDataset[currentCardIndex] : previewRows[activeDatasetId];
+
+  const navigateCard = (dir: 1 | -1) => {
+    const count = allCardsForDataset.length;
+    if (count === 0) return;
+    const next = (currentCardIndex + dir + count) % count;
+    setPreviewRowIndex(prev => ({ ...prev, [activeDatasetId]: next }));
+  };
 
   const renderResizeHandles = (layer: TemplateLayer) => {
     if (activeLayerIds.length !== 1 || activeLayerIds[0] !== layer.id || layer.isLocked) return null;
@@ -682,7 +741,7 @@ export default function TemplateEditorTab() {
 
                       let displayContent = layer.content;
                       if (layer.type === 'text' && layer.sourceType === 'column' && layer.columnId) {
-                        displayContent = previewData && previewData[layer.columnId] !== undefined ? previewData[layer.columnId] : `[${layer.columnId.toUpperCase()}]`;
+                        displayContent = previewData && previewData[layer.columnId] !== undefined && previewData[layer.columnId] !== null ? previewData[layer.columnId] : '';
                       }
 
                       const justifyContent = layer.textAlign === 'right' ? 'flex-end' : layer.textAlign === 'center' ? 'center' : 'flex-start';
@@ -698,7 +757,7 @@ export default function TemplateEditorTab() {
                             outline: isSelected && !isDraggingThis ? '2px solid var(--accent-red)' : 'none', 
                             cursor: layer.isLocked ? 'default' : isDraggingThis ? 'grabbing' : 'grab', display: 'flex', alignItems: 'center', 
                             justifyContent: layer.type === 'text' ? justifyContent : 'center', textAlign: layer.textAlign || 'left',
-                            fontFamily: 'monospace', fontWeight: 'bold', fontSize: '16px', zIndex: layers.length - index,
+                            fontFamily: 'monospace', fontWeight: 'bold', fontSize: `${layer.fontSize || 16}px`, zIndex: layers.length - index,
                             wordBreak: 'break-word', padding: layer.type === 'text' ? '0 4px' : '0'
                           }}
                         >
@@ -713,6 +772,17 @@ export default function TemplateEditorTab() {
                     <div style={{ position: 'absolute', inset: '15px', border: '1px dashed rgba(255,0,0,0.3)', pointerEvents: 'none', zIndex: 1000 }} />
                   </div>
                 </div>
+
+                {/* Défileur de cartes */}
+                {allCardsForDataset.length > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '0.5rem', borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg-secondary)', flexShrink: 0 }}>
+                    <button onClick={(e) => { e.stopPropagation(); navigateCard(-1); }} style={{ padding: '0.2rem 0.7rem', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1rem' }}>‹</button>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                      CARTE {currentCardIndex + 1} / {allCardsForDataset.length}
+                    </span>
+                    <button onClick={(e) => { e.stopPropagation(); navigateCard(1); }} style={{ padding: '0.2rem 0.7rem', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1rem' }}>›</button>
+                  </div>
+                )}
               </div>
 
               {/* --- PANNEAU INSPECTEUR & CALQUES (LARGEUR FIXE 320px) --- */}
@@ -786,6 +856,42 @@ export default function TemplateEditorTab() {
                         </div>
                       </div>
 
+                      {/* IMAGE SELECTION */}
+                      {activeLayer.type === 'image' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', padding: '0.8rem', border: '1px solid var(--border)', backgroundColor: 'var(--bg-primary)' }}>
+                          <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Icône</Txt></label>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                            <div style={{ width: '48px', height: '48px', background: '#fff', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {activeLayer.content ? (
+                                <img src={`https://api.iconify.design/${activeLayer.content}.svg?color=${encodeURIComponent(activeLayer.color)}`} alt="preview" style={{ width: '80%', height: '80%', objectFit: 'contain' }} />
+                              ) : (
+                                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>?</span>
+                              )}
+                            </div>
+                            <input type="text" className="tech-input" style={{ flex: 1, fontSize: '0.8rem' }} value={activeLayer.content} onChange={(e) => updateLayer(activeLayer.id, { content: e.target.value })} placeholder="mdi:skull" />
+                          </div>
+
+                          {savedIcons.length > 0 && (
+                            <>
+                              <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}><Txt>Favoris</Txt></label>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.3rem', maxHeight: '110px', overflowY: 'auto' }}>
+                                {savedIcons.map(iconName => (
+                                  <div
+                                    key={iconName}
+                                    onClick={() => updateLayer(activeLayer.id, { content: iconName })}
+                                    style={{ aspectRatio: '1/1', background: '#fff', border: `2px solid ${activeLayer.content === iconName ? 'var(--accent-red)' : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                                    title={iconName}
+                                  >
+                                    <img src={`https://api.iconify.design/${iconName}.svg`} alt={iconName} style={{ width: '70%', height: '70%', objectFit: 'contain', pointerEvents: 'none' }} />
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
                       {/* DATA BINDING */}
                       {activeLayer.type === 'text' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', padding: '0.8rem', border: '1px solid var(--border)', backgroundColor: 'var(--bg-primary)' }}>
@@ -807,13 +913,21 @@ export default function TemplateEditorTab() {
                             <input type="text" className="tech-input" style={{ width: '100%', fontSize: '0.9rem', marginTop: '0.5rem' }} value={activeLayer.content} onChange={(e) => updateLayer(activeLayer.id, { content: e.target.value })} placeholder="Texte libre..." />
                           )}
                           
-                          {/* Alignement Texte */}
+                          {/* Alignement & Taille police */}
                           <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Alignement</Txt></label>
                             <div style={{ display: 'flex', gap: '0.3rem' }}>
                               <button onClick={() => updateLayer(activeLayer.id, { textAlign: 'left' })} style={{ width: '30px', height: '30px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.textAlign === 'left' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.textAlign === 'left' ? '#fff' : 'var(--text-primary)' }}>[L]</button>
                               <button onClick={() => updateLayer(activeLayer.id, { textAlign: 'center' })} style={{ width: '30px', height: '30px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.textAlign === 'center' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.textAlign === 'center' ? '#fff' : 'var(--text-primary)' }}>[C]</button>
                               <button onClick={() => updateLayer(activeLayer.id, { textAlign: 'right' })} style={{ width: '30px', height: '30px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.textAlign === 'right' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.textAlign === 'right' ? '#fff' : 'var(--text-primary)' }}>[R]</button>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Taille police</Txt></label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <button onClick={() => updateLayer(activeLayer.id, { fontSize: Math.max(6, (activeLayer.fontSize || 16) - 1) })} style={{ width: '24px', height: '24px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                              <input type="number" className="tech-input" style={{ width: '52px', fontSize: '0.9rem', textAlign: 'center' }} value={activeLayer.fontSize || 16} min={6} max={200} onChange={(e) => updateLayer(activeLayer.id, { fontSize: Math.max(6, parseInt(e.target.value) || 16) })} />
+                              <button onClick={() => updateLayer(activeLayer.id, { fontSize: (activeLayer.fontSize || 16) + 1 })} style={{ width: '24px', height: '24px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                             </div>
                           </div>
                         </div>
@@ -916,6 +1030,8 @@ export default function TemplateEditorTab() {
             <>
               <div className="context-menu-label">// GABARIT</div>
               <div className="context-menu-item" onClick={() => { setActiveTplToEdit(contextMenu.id); setTplFormName(templates.find(t=>t.id===contextMenu.id)?.name || ''); setTplModalMode('edit'); setIsTplModalOpen(true); setContextMenu(null); }}>[ MODIFIER ]</div>
+              <div className="context-menu-item" onClick={() => duplicateTemplate(contextMenu.id)}>[ DUPLIQUER ]</div>
+              <div className="context-menu-divider" />
               <div className="context-menu-item" style={{ color: 'var(--accent-red)' }} onClick={() => deleteTemplate(contextMenu.id)}>[X] SUPPRIMER</div>
             </>
           ) : (

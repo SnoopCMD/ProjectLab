@@ -197,26 +197,35 @@ export default function DataTab() {
     setHistory([nextData.rows]); setHistoryIndex(0); setSelectedCells([]); setContextMenu(null); setViewMode('editor');
   };
 
+  const saveSchema = async (updatedDatasets: Dataset[], updatedDataStore: Record<string, { columns: Column[], rows: any[] }>) => {
+    if (!projectId) return;
+    const columnsByDataset: Record<string, Column[]> = {};
+    updatedDatasets.forEach(ds => { columnsByDataset[ds.id] = updatedDataStore[ds.id]?.columns || defaultColumns; });
+    await supabase.from('projects').update({ columns_schema: { datasets: updatedDatasets, columnsByDataset } }).eq('id', projectId);
+  };
+
   const openAddDatasetModal = () => { setSetFormName(`Set de cartes ${datasets.length + 1}`); setDatasetModalMode('add'); setIsSetModalOpen(true); };
 
-  const saveDatasetDetails = (e: React.FormEvent) => {
+  const saveDatasetDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!setFormName.trim()) return;
-    const formattedName = setFormName; 
 
     if (datasetModalMode === 'add') {
       const newId = 'ds_' + Math.random().toString(36).substring(2, 9);
-      const newDataset = { id: newId, name: formattedName };
-      setDatasets([...datasets, newDataset]);
-      setDataStore(prev => ({
-        ...prev, [activeDatasetId]: { columns, rows }, [newId]: { columns: defaultColumns, rows: [{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }] }
-      }));
+      const newDataset = { id: newId, name: setFormName };
+      const newDatasets = [...datasets, newDataset];
+      const newDataStore = { ...dataStore, [activeDatasetId]: { columns, rows }, [newId]: { columns: defaultColumns, rows: [{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }] } };
+      setDatasets(newDatasets);
+      setDataStore(newDataStore);
       setColumns(defaultColumns); setRows([{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }]); setActiveDatasetId(newId);
-      setHistory([[{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }]]); setHistoryIndex(0); setViewMode('editor'); 
+      setHistory([[{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }]]); setHistoryIndex(0); setViewMode('editor');
+      await saveSchema(newDatasets, newDataStore);
     } else if (datasetModalMode === 'edit' && activeDatasetToEdit) {
-      setDatasets(datasets.map(ds => ds.id === activeDatasetToEdit ? { ...ds, name: formattedName } : ds));
+      const newDatasets = datasets.map(ds => ds.id === activeDatasetToEdit ? { ...ds, name: setFormName } : ds);
+      setDatasets(newDatasets);
+      await saveSchema(newDatasets, { ...dataStore, [activeDatasetId]: { columns, rows } });
     }
-    setHasChanges(true); setIsSetModalOpen(false); 
+    setIsSetModalOpen(false);
   };
 
   const handleDatasetContextMenu = (e: React.MouseEvent, datasetId: string) => {
@@ -233,17 +242,26 @@ export default function DataTab() {
     setContextMenu(null);
   };
 
-  const duplicateDataset = (targetId: string) => {
+  const duplicateDataset = async (targetId: string) => {
     const original = datasets.find(ds => ds.id === targetId);
     if (!original) return;
+    setContextMenu(null);
     const newId = 'ds_' + Math.random().toString(36).substring(2, 9);
     const newDataset = { id: newId, name: `${original.name} Copie` };
     const sourceData = targetId === activeDatasetId ? { columns, rows } : dataStore[targetId] || { columns: defaultColumns, rows: [] };
     const clonedData = JSON.parse(JSON.stringify(sourceData));
     clonedData.rows.forEach((r: any, i: number) => { r.id = `#${String(i + 1).padStart(3, '0')}`; });
-    setDatasets([...datasets, newDataset]);
-    setDataStore(prev => ({ ...prev, [activeDatasetId]: { columns, rows }, [newId]: clonedData }));
-    setHasChanges(true); setContextMenu(null);
+    const newDatasets = [...datasets, newDataset];
+    const newDataStore = { ...dataStore, [activeDatasetId]: { columns, rows }, [newId]: clonedData };
+    setDatasets(newDatasets);
+    setDataStore(newDataStore);
+    setHasChanges(true);
+    await saveSchema(newDatasets, newDataStore);
+    // Ouvrir directement le renommage
+    setActiveDatasetToEdit(newId);
+    setSetFormName(newDataset.name);
+    setDatasetModalMode('edit');
+    setIsSetModalOpen(true);
   };
 
   const deleteDataset = (targetId: string) => {
@@ -531,7 +549,7 @@ export default function DataTab() {
                           const cellKey = `${rowIndex}-${col.id}`; const isSelected = selectedCells.includes(cellKey); const isFillTarget = fillTargetCells.includes(cellKey); const isBottomRight = bottomRightCell === cellKey;
                           return (
                             <td key={col.id} className={`data-cell ${isSelected ? 'selected' : ''} ${isFillTarget ? 'fill-target' : ''}`} onMouseDown={(e) => handleCellMouseDown(e, rowIndex, col.id)} onMouseEnter={() => handleCellMouseEnter(rowIndex, col.id)} onContextMenu={(e) => handleContextMenu(e, 'cell', rowIndex, col.id)}>
-                              <input type={col.type === 'number' ? 'number' : 'text'} value={row[col.id] || ''} onChange={(e) => { const newRows = [...rows]; newRows[rowIndex][col.id] = e.target.value; pushHistory(newRows); }} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault(); }} style={{ width: '100%', padding: '0.75rem', background: 'transparent', border: 'none', color: 'inherit', fontFamily: 'inherit', textAlign: col.id === 'qte' ? 'center' : 'left', pointerEvents: isDraggingSelection || isDraggingFill ? 'none' : 'auto' }} />
+                              <input type={col.type === 'number' ? 'number' : 'text'} value={row[col.id] || ''} onChange={(e) => { const newRows = [...rows]; newRows[rowIndex][col.id] = e.target.value; pushHistory(newRows); }} onFocus={(e) => e.target.select()} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault(); }} style={{ width: '100%', padding: '0.75rem', background: 'transparent', border: 'none', color: 'inherit', fontFamily: 'inherit', textAlign: col.id === 'qte' ? 'center' : 'left', pointerEvents: isDraggingSelection || isDraggingFill ? 'none' : 'auto' }} />
                               {isBottomRight && <div className="fill-handle" onMouseDown={(e) => { e.stopPropagation(); setIsDraggingFill(true); }} />}
                             </td>
                           );
