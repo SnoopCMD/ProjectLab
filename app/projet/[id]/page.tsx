@@ -677,7 +677,7 @@ export default function TemplateEditorTab() {
       {viewMode === 'editor' && (
         <>
           {/* ONGLETS GABARITS */}
-          <div className="dataset-tabs-container animate-table-switch">
+          <div className="dataset-tabs-container animate-table-switch" onWheel={(e) => { e.preventDefault(); e.currentTarget.scrollLeft += e.deltaY; }}>
             <button className="dataset-tab" style={{ color: 'var(--text-primary)', marginRight: '1rem', border: '1px solid var(--border)' }} onClick={goToGrid}>[ &lt; MOSAÏQUE ]</button>
             {templates.map(tpl => (
               <button key={tpl.id} className={`dataset-tab ${activeTemplateId === tpl.id ? 'active' : ''}`} style={{ color: activeTemplateId === tpl.id ? 'var(--accent-red)' : 'var(--text-secondary)' }} onClick={() => openTemplate(tpl.id)} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type: 'template', id: tpl.id }); }}>

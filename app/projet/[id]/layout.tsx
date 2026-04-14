@@ -43,7 +43,8 @@ export default function ProjectLayout({
   const tabs = [
     { id: 'gabarits', label: 'GABARITS', path: `/projet/${resolvedParams.id}` },
     { id: 'donnees', label: 'DONNÉES', path: `/projet/${resolvedParams.id}/donnees` },
-    { id: 'cartes', label: 'CARTES', path: `/projet/${resolvedParams.id}/cartes` }
+    { id: 'cartes', label: 'CARTES', path: `/projet/${resolvedParams.id}/cartes` },
+    { id: 'ressources', label: 'RESSOURCES', path: `/projet/${resolvedParams.id}/ressources` },
   ];
 
   return (

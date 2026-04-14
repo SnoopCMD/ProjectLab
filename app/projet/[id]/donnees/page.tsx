@@ -80,6 +80,17 @@ export default function DataTab() {
   const [fillTargetCells, setFillTargetCells] = useState<string[]>([]);
   const [bottomRightCell, setBottomRightCell] = useState<string | null>(null);
 
+  const [savedAssets, setSavedAssets] = useState<string[]>([]);
+  const [imagePicker, setImagePicker] = useState<{ rowIndex: number; colId: string; top: number; left: number } | null>(null);
+
+  const [isCreateTplModalOpen, setIsCreateTplModalOpen] = useState(false);
+  const [createTplName, setCreateTplName] = useState('');
+  const [createTplDatasetId, setCreateTplDatasetId] = useState<string | null>(null);
+  const [usePatron, setUsePatron] = useState(false);
+  const [patronId, setPatronId] = useState('');
+  const [existingTemplates, setExistingTemplates] = useState<{ id: string; name: string; layers: any[]; width: number; height: number }[]>([]);
+  const [isCreatingTpl, setIsCreatingTpl] = useState(false);
+
   const selectedRowIndices = Array.from(new Set(selectedCells.map(c => parseInt(c.split('-')[0]))));
   const isMultiRowSelected = selectedRowIndices.length > 1;
 
@@ -102,7 +113,7 @@ export default function DataTab() {
       const decodedSlug = decodeURIComponent(projectSlug);
       const { data, error: projectError } = await supabase
         .from('projects')
-        .select('id, columns_schema')
+        .select('id, columns_schema, saved_assets')
         .eq('slug', decodedSlug)
         .limit(1);
       
@@ -145,6 +156,11 @@ export default function DataTab() {
       loadedDatasets.forEach(ds => {
         if (initialStore[ds.id].rows.length === 0) initialStore[ds.id].rows = [{ id: '#001', name: 'Nouvelle Entrée', qte: '1' }];
       });
+
+      if (projectData.saved_assets && Array.isArray(projectData.saved_assets)) setSavedAssets(projectData.saved_assets);
+
+      const { data: tplData } = await supabase.from('templates').select('id, name, layers, width, height').eq('project_id', projectData.id);
+      if (tplData) setExistingTemplates(tplData.map(t => ({ id: t.id, name: t.name, layers: t.layers || [], width: t.width || 300, height: t.height || 420 })));
 
       setDataStore(initialStore);
       setColumns(initialStore[firstId].columns);
@@ -264,6 +280,35 @@ export default function DataTab() {
     setIsSetModalOpen(true);
   };
 
+  const openCreateTplModal = (datasetId: string) => {
+    const ds = datasets.find(d => d.id === datasetId);
+    setCreateTplName(ds ? `Gabarit ${ds.name}` : 'Nouveau gabarit');
+    setCreateTplDatasetId(datasetId);
+    setUsePatron(false);
+    setPatronId(existingTemplates[0]?.id || '');
+    setContextMenu(null);
+    setIsCreateTplModalOpen(true);
+  };
+
+  const createTemplateForDataset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createTplName.trim() || !projectId || !createTplDatasetId) return;
+    setIsCreatingTpl(true);
+    const patron = usePatron ? existingTemplates.find(t => t.id === patronId) : null;
+    const clonedLayers = patron ? JSON.parse(JSON.stringify(patron.layers)).map((l: any) => ({ ...l, id: 'l_' + Date.now() + Math.random() })) : [];
+    const { data } = await supabase.from('templates').insert({
+      project_id: projectId,
+      name: createTplName,
+      dataset_id: createTplDatasetId,
+      layers: clonedLayers,
+      width: patron?.width || 300,
+      height: patron?.height || 420,
+    }).select('id, name, layers, width, height').single();
+    if (data) setExistingTemplates(prev => [...prev, { id: data.id, name: data.name, layers: data.layers || [], width: data.width || 300, height: data.height || 420 }]);
+    setIsCreatingTpl(false);
+    setIsCreateTplModalOpen(false);
+  };
+
   const deleteDataset = (targetId: string) => {
     if (datasets.length <= 1) { alert("⚠️ SÉCURITÉ : Vous ne pouvez pas supprimer le dernier set de données."); setContextMenu(null); return; }
     const newDatasets = datasets.filter(ds => ds.id !== targetId);
@@ -286,15 +331,28 @@ export default function DataTab() {
   const redo = () => { if (historyIndex < history.length - 1) { setHistoryIndex(historyIndex + 1); setRows(JSON.parse(JSON.stringify(history[historyIndex + 1]))); setHasChanges(true); } };
 
   useEffect(() => {
-    const handleGlobalClick = () => { setContextMenu(null); setSelectedCells([]); setLastSelectedRowIndex(null); };
+    const handleGlobalClick = () => { setContextMenu(null); setSelectedCells([]); setLastSelectedRowIndex(null); setImagePicker(null); };
     const handleMouseUp = () => { setIsDraggingSelection(false); if (isDraggingFill) applyFillHandle(); };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (viewMode !== 'editor') return; 
+      if (viewMode !== 'editor') return;
       if (e.ctrlKey || e.metaKey) { if (e.key === 'z') { e.preventDefault(); undo(); } if (e.key === 'y' || (e.shiftKey && e.key === 'Z')) { e.preventDefault(); redo(); } }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedCells.length > 1) {
+        e.preventDefault();
+        (document.activeElement as HTMLElement)?.blur();
+        const newRows = rows.map((row, rowIndex) => {
+          const updatedRow = { ...row };
+          selectedCells.forEach(cellKey => {
+            const [rStr, colId] = cellKey.split('-');
+            if (parseInt(rStr) === rowIndex) updatedRow[colId] = '';
+          });
+          return updatedRow;
+        });
+        pushHistory(newRows);
+      }
     };
     window.addEventListener('click', handleGlobalClick); window.addEventListener('mouseup', handleMouseUp); window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('click', handleGlobalClick); window.removeEventListener('mouseup', handleMouseUp); window.removeEventListener('keydown', handleKeyDown); };
-  }, [isDraggingFill, fillTargetCells, viewMode]);
+  }, [isDraggingFill, fillTargetCells, viewMode, selectedCells, rows]);
 
   const applyFillHandle = () => {
     if (fillTargetCells.length === 0) { setIsDraggingFill(false); return; }
@@ -518,7 +576,7 @@ export default function DataTab() {
 
       {viewMode === 'editor' && (
         <>
-          <div className="dataset-tabs-container animate-table-switch">
+          <div className="dataset-tabs-container animate-table-switch" onWheel={(e) => { e.preventDefault(); e.currentTarget.scrollLeft += e.deltaY; }}>
             <button className="dataset-tab" style={{ color: 'var(--text-primary)', marginRight: '1rem', border: '1px solid var(--border)' }} onClick={goToGrid}>[ &lt; MOSAÏQUE ]</button>
             {datasets.map(ds => (
               <button key={ds.id} className={`dataset-tab ${activeDatasetId === ds.id ? 'active' : ''}`} style={{ color: activeDatasetId === ds.id ? 'var(--accent-red)' : 'var(--text-secondary)' }} onClick={() => openDataset(ds.id)} onContextMenu={(e) => handleDatasetContextMenu(e, ds.id)}>[ <Txt>{ds.name}</Txt> ]</button>
@@ -549,7 +607,14 @@ export default function DataTab() {
                           const cellKey = `${rowIndex}-${col.id}`; const isSelected = selectedCells.includes(cellKey); const isFillTarget = fillTargetCells.includes(cellKey); const isBottomRight = bottomRightCell === cellKey;
                           return (
                             <td key={col.id} className={`data-cell ${isSelected ? 'selected' : ''} ${isFillTarget ? 'fill-target' : ''}`} onMouseDown={(e) => handleCellMouseDown(e, rowIndex, col.id)} onMouseEnter={() => handleCellMouseEnter(rowIndex, col.id)} onContextMenu={(e) => handleContextMenu(e, 'cell', rowIndex, col.id)}>
-                              <input type={col.type === 'number' ? 'number' : 'text'} value={row[col.id] || ''} onChange={(e) => { const newRows = [...rows]; newRows[rowIndex][col.id] = e.target.value; pushHistory(newRows); }} onFocus={(e) => e.target.select()} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault(); }} style={{ width: '100%', padding: '0.75rem', background: 'transparent', border: 'none', color: 'inherit', fontFamily: 'inherit', textAlign: col.id === 'qte' ? 'center' : 'left', pointerEvents: isDraggingSelection || isDraggingFill ? 'none' : 'auto' }} />
+                              {col.type === 'image' ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.75rem' }}>
+                                  {row[col.id] && <img src={`https://api.iconify.design/${row[col.id]}.svg`} alt="" style={{ width: '20px', height: '20px', objectFit: 'contain', flexShrink: 0 }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+                                  <input type="text" value={row[col.id] || ''} onChange={(e) => { const newRows = [...rows]; newRows[rowIndex][col.id] = e.target.value; pushHistory(newRows); }} onFocus={(e) => { e.target.select(); if (savedAssets.length > 0) { const rect = e.target.getBoundingClientRect(); setImagePicker({ rowIndex, colId: col.id, top: rect.bottom + 4, left: rect.left }); } }} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault(); }} style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: 'inherit', fontFamily: 'inherit', pointerEvents: isDraggingSelection || isDraggingFill ? 'none' : 'auto', outline: 'none' }} placeholder="mdi:sword" />
+                                </div>
+                              ) : (
+                                <input type={col.type === 'number' ? 'number' : 'text'} value={row[col.id] || ''} onChange={(e) => { const newRows = [...rows]; newRows[rowIndex][col.id] = e.target.value; pushHistory(newRows); }} onFocus={(e) => e.target.select()} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault(); }} style={{ width: '100%', padding: '0.75rem', background: 'transparent', border: 'none', color: 'inherit', fontFamily: 'inherit', textAlign: col.id === 'qte' ? 'center' : 'left', pointerEvents: isDraggingSelection || isDraggingFill ? 'none' : 'auto' }} />
+                              )}
                               {isBottomRight && <div className="fill-handle" onMouseDown={(e) => { e.stopPropagation(); setIsDraggingFill(true); }} />}
                             </td>
                           );
@@ -600,6 +665,8 @@ export default function DataTab() {
               <div className="context-menu-item" onClick={() => openEditDatasetModal(contextMenu.datasetId!)}>[ MODIFIER ]</div>
               <div className="context-menu-item" onClick={() => duplicateDataset(contextMenu.datasetId!)}>[ DUPLIQUER ]</div>
               <div className="context-menu-divider" />
+              <div className="context-menu-item" onClick={() => openCreateTplModal(contextMenu.datasetId!)}>+ CRÉER GABARIT</div>
+              <div className="context-menu-divider" />
               <div className="context-menu-item" style={{ color: 'var(--accent-red)' }} onClick={() => deleteDataset(contextMenu.datasetId!)}>[X] PURGER SET</div>
             </>
           )}
@@ -626,6 +693,72 @@ export default function DataTab() {
               <input type="text" className="tech-input mb-4" placeholder="Nom de la colonne" value={colForm.name} onChange={(e) => setColForm({...colForm, name: e.target.value})} required />
               <select className="tech-input mb-4" value={colForm.type} onChange={(e) => setColForm({...colForm, type: e.target.value as ColumnType})}><option value="text">TEXTE</option><option value="number">NOMBRE</option><option value="image">IMAGE (URL)</option></select>
               <div className="flex-between" style={{ gap: '1rem' }}><button type="button" className="btn-cancel" onClick={() => setIsColModalOpen(false)}>[ ANNULER ]</button><button type="submit" className="btn-confirm">[ ENREGISTRER ]</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {imagePicker && savedAssets.length > 0 && (
+        <div
+          style={{ position: 'fixed', top: imagePicker.top, left: imagePicker.left, zIndex: 200, backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', padding: '0.5rem', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', display: 'grid', gridTemplateColumns: 'repeat(6, 36px)', gap: '0.3rem' }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {savedAssets.map(iconName => (
+            <div
+              key={iconName}
+              title={iconName}
+              onClick={() => {
+                const newRows = [...rows];
+                newRows[imagePicker.rowIndex][imagePicker.colId] = iconName;
+                pushHistory(newRows);
+                setImagePicker(null);
+              }}
+              style={{ width: '36px', height: '36px', background: '#fff', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent-red)'}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}
+            >
+              <img src={`https://api.iconify.design/${iconName}.svg`} alt={iconName} style={{ width: '70%', height: '70%', objectFit: 'contain', pointerEvents: 'none' }} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isCreateTplModalOpen && (
+        <div className="modal-overlay flex-center" style={{ zIndex: 100 }}>
+          <div className="modal-content panel border-thin">
+            <h3 className="modal-title"><Txt>Créer un gabarit</Txt></h3>
+            <form onSubmit={createTemplateForDataset} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}><Txt>Nom du gabarit</Txt></label>
+                <input type="text" className="tech-input" style={{ width: '100%' }} value={createTplName} onChange={(e) => setCreateTplName(e.target.value)} autoFocus required />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}><Txt>Dataset source</Txt></label>
+                <select className="tech-input" style={{ width: '100%' }} value={createTplDatasetId || ''} onChange={(e) => setCreateTplDatasetId(e.target.value)}>
+                  {datasets.map(ds => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
+                </select>
+              </div>
+              <div style={{ border: '1px solid var(--border)', padding: '0.8rem', backgroundColor: 'var(--bg-primary)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                  <input type="checkbox" checked={usePatron} onChange={(e) => setUsePatron(e.target.checked)} style={{ accentColor: 'var(--accent-red)', width: '14px', height: '14px' }} />
+                  <Txt>Copier la mise en forme d'un gabarit existant</Txt>
+                </label>
+                {usePatron && (
+                  <div style={{ marginTop: '0.8rem' }}>
+                    {existingTemplates.length === 0 ? (
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Aucun gabarit existant.</p>
+                    ) : (
+                      <select className="tech-input" style={{ width: '100%' }} value={patronId} onChange={(e) => setPatronId(e.target.value)}>
+                        {existingTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex-between" style={{ gap: '1rem', marginTop: '0.5rem' }}>
+                <button type="button" className="btn-cancel" onClick={() => setIsCreateTplModalOpen(false)}>[ ANNULER ]</button>
+                <button type="submit" className="btn-confirm" disabled={isCreatingTpl}>{isCreatingTpl ? '[ CRÉATION... ]' : '[ CRÉER ]'}</button>
+              </div>
             </form>
           </div>
         </div>
