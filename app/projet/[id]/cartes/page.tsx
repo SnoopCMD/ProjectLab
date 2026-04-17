@@ -13,7 +13,7 @@ interface TemplateLayer {
   id: string; name: string; type: LayerType; isVisible: boolean;
   x: number; y: number; width: number; height: number;
   content: string; color: string; sourceType: SourceType; columnId: string;
-  textAlign?: 'left' | 'center' | 'right'; fontSize?: number; aspectLocked?: boolean;
+  textAlign?: 'left' | 'center' | 'right'; fontSize?: number; aspectLocked?: boolean; rotation?: number;
 }
 
 interface Template {
@@ -49,13 +49,15 @@ function CardRender({ template, data, scale = 1 }: { template: Template; data: a
             color: layer.color,
             display: 'flex', alignItems: 'center', justifyContent: justify,
             textAlign: layer.textAlign || 'left',
-            fontFamily: 'monospace', fontWeight: 'bold',
+            fontFamily: '"Courier New", Courier, monospace', fontWeight: 'bold',
             fontSize: (layer.fontSize || 16) * scale + 'px',
+            lineHeight: 1.2,
             wordBreak: 'break-word', padding: layer.type === 'text' ? `0 ${4 * scale}px` : '0',
             zIndex: template.layers.length - idx,
             overflow: 'hidden',
+            transform: `rotate(${layer.rotation || 0}deg)`, transformOrigin: 'center center',
           }}>
-            {layer.type === 'text' && <span style={{ pointerEvents: 'none' }}>{value}</span>}
+            {layer.type === 'text' && <span style={{ pointerEvents: 'none', display: 'block', width: '100%', wordBreak: 'break-word' }}>{value}</span>}
             {layer.type === 'image' && value && (
               <img src={`https://api.iconify.design/${value}.svg?color=${encodeURIComponent(layer.color)}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
             )}
@@ -110,7 +112,7 @@ export default function CartesPage() {
 
   // Paramètres PDF
   const [pageFormat, setPageFormat] = useState<'A4' | 'A3' | 'Letter'>('A4');
-  const [cardsPerRow, setCardsPerRow] = useState(3);
+  const [cardWidthMm, setCardWidthMm] = useState(63);
   const [marginMm, setMarginMm] = useState(5);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [borderWidth, setBorderWidth] = useState(0);
@@ -208,15 +210,12 @@ export default function CartesPage() {
       const { default: jsPDF } = await import('jspdf');
       const { default: html2canvas } = await import('html2canvas');
       const { createRoot } = await import('react-dom/client');
+      const { flushSync } = await import('react-dom');
       const React = await import('react');
 
       const [pageW, pageH] = orientation === 'portrait'
         ? PAGE_FORMATS[pageFormat]
         : [PAGE_FORMATS[pageFormat][1], PAGE_FORMATS[pageFormat][0]];
-
-      const marginPx = marginMm * MM_TO_PX;
-      const usableW = (pageW * MM_TO_PX) - marginPx * 2;
-      const usableH = (pageH * MM_TO_PX) - marginPx * 2;
 
       // Cartes sélectionnées dans l'ordre des decks
       const selectedList: { template: Template; data: any }[] = [];
@@ -229,19 +228,39 @@ export default function CartesPage() {
       });
       if (selectedList.length === 0) { setIsGenerating(false); return; }
 
-      const cardWpx = usableW / cardsPerRow;
       const firstTpl = selectedList[0].template;
       const aspectRatio = firstTpl.height / firstTpl.width;
-      const cardHpx = cardWpx * aspectRatio;
-      const rowsPerPage = Math.max(1, Math.floor(usableH / cardHpx));
+
+      // Dimensions fixes de la carte (taille réelle demandée)
+      const cardWmm = cardWidthMm;
+      const cardHmm = cardWmm * aspectRatio;
+      const cardWpx = cardWmm * MM_TO_PX;
+      const cardHpx = cardHmm * MM_TO_PX;
+
+      const cardsPerRow = Math.max(1, Math.floor((pageW - marginMm * 2) / cardWmm));
+      const rowsPerPage = Math.max(1, Math.floor((pageH - marginMm * 2) / cardHmm));
       const cardsPerPage = cardsPerRow * rowsPerPage;
+      const renderW = cardsPerRow * cardWpx;
 
       const pdf = new jsPDF({ orientation, unit: 'mm', format: pageFormat });
 
-      // Conteneur de rendu hors-écran — créé une seule fois
+      // Conteneur de rendu — placé hors écran pour éviter qu'html2canvas le capture deux fois
+      const containerH = rowsPerPage * cardHpx;
       const renderContainer = document.createElement('div');
-      renderContainer.style.cssText = `position:fixed;left:-9999px;top:0;background:white;width:${usableW}px`;
+      renderContainer.style.cssText = `position:fixed;top:-${containerH + 100}px;left:-${renderW + 100}px;z-index:-1;background:white;width:${renderW}px;height:${containerH}px;overflow:hidden;pointer-events:none;`;
       document.body.appendChild(renderContainer);
+
+      const waitForImages = (el: HTMLElement): Promise<void> => new Promise(resolve => {
+        const imgs = el.querySelectorAll('img');
+        if (!imgs.length) { resolve(); return; }
+        let pending = imgs.length;
+        const done = () => { if (--pending === 0) resolve(); };
+        imgs.forEach(img => {
+          if (img.complete && img.naturalWidth > 0) done();
+          else { img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }); }
+        });
+        setTimeout(resolve, 3000);
+      });
 
       // Root React créé une seule fois, réutilisé par page
       const root = createRoot(renderContainer);
@@ -250,43 +269,54 @@ export default function CartesPage() {
         const pageCards = selectedList.slice(pageIdx * cardsPerPage, (pageIdx + 1) * cardsPerPage);
         const scale = cardWpx / (pageCards[0].template.width || 300);
 
-        root.render(
-          React.createElement('div', {
-            style: { display: 'flex', flexWrap: 'wrap', width: usableW, background: 'white', alignContent: 'flex-start' }
-          },
-            pageCards.map((item, idx) =>
-              React.createElement('div', {
-                key: idx,
-                style: {
-                  outline: borderWidth > 0 ? `${borderWidth}px solid #000` : 'none',
-                  outlineOffset: '-' + borderWidth + 'px',
-                  flexShrink: 0,
-                  lineHeight: 0,
-                }
-              },
-                React.createElement(CardRender, { template: item.template, data: item.data, scale })
-              )
+        // Positionnement absolu précis — évite les problèmes de rendu flex par html2canvas
+        flushSync(() => {
+          root.render(
+            React.createElement('div', {
+              style: { position: 'relative', width: renderW, height: containerH, background: 'white' }
+            },
+              pageCards.map((item, idx) => {
+                const col = idx % cardsPerRow;
+                const row = Math.floor(idx / cardsPerRow);
+                return React.createElement('div', {
+                  key: idx,
+                  style: {
+                    position: 'absolute',
+                    left: col * cardWpx,
+                    top: row * cardHpx,
+                    boxShadow: borderWidth > 0 ? `inset 0 0 0 ${borderWidth}px #000` : 'none',
+                  }
+                },
+                  React.createElement(CardRender, { template: item.template, data: item.data, scale })
+                );
+              })
             )
-          )
-        );
+          );
+        });
 
-        // Attendre le rendu React + chargement des images SVG
-        await new Promise(resolve => setTimeout(resolve, 400));
+        // Attendre le chargement des images SVG
+        await waitForImages(renderContainer);
 
         const canvas = await html2canvas(renderContainer, {
           scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false,
+          x: 0, y: 0, width: renderW, height: containerH,
+          onclone: (_doc, el) => {
+            // Supprimer tous les autres éléments du document cloné pour éviter qu'ils soient capturés
+            [..._doc.body.children].forEach(child => { if (child !== el) child.remove(); });
+            _doc.body.style.cssText = 'margin:0;padding:0;overflow:hidden;';
+            el.style.cssText = `position:absolute;top:0;left:0;background:white;width:${renderW}px;height:${containerH}px;overflow:hidden;`;
+          },
         });
 
         if (pageIdx > 0) pdf.addPage();
 
-        const imgW = pageW - marginMm * 2;
-        const imgH = (canvas.height / canvas.width) * imgW;
+        // Taille réelle en mm dans le PDF (cartes à la taille demandée, pas étirées)
+        const imgW = cardsPerRow * cardWmm;
+        const imgH = rowsPerPage * cardHmm;
         pdf.addImage(canvas.toDataURL('image/png'), 'PNG', marginMm, marginMm, imgW, imgH);
 
         // Lignes de coupe
         if (showCutLines) {
-          const cardWmm = imgW / cardsPerRow;
-          const cardHmm = cardWmm * aspectRatio;
           const cutLen = 3; // mm
           const cutOffset = 1;
           pdf.setDrawColor(150, 150, 150);
@@ -316,7 +346,7 @@ export default function CartesPage() {
     }
 
     setIsGenerating(false);
-  }, [selectedCards, decks, pageFormat, cardsPerRow, marginMm, orientation, borderWidth, showCutLines, totalSelected]);
+  }, [selectedCards, decks, pageFormat, cardWidthMm, marginMm, orientation, borderWidth, showCutLines, totalSelected]);
 
   // ─── RENDU ─────────────────────────────────────────────────────────────────
 
@@ -418,11 +448,13 @@ export default function CartesPage() {
             </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>CARTES/LIGNE</label>
+            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>TAILLE CARTE</label>
             <div style={{ display: 'flex', gap: '0.25rem' }}>
-              {[2, 3, 4, 5].map(n => (
-                <button key={n} onClick={() => setCardsPerRow(n)} style={{ width: '28px', height: '28px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: cardsPerRow === n ? 'var(--accent-red)' : 'var(--bg-secondary)', color: cardsPerRow === n ? '#fff' : 'var(--text-primary)', fontSize: '0.8rem' }}>{n}</button>
+              {[{ l: 'Mini', mm: 41 }, { l: 'Poker', mm: 63 }, { l: 'Tarot', mm: 70 }].map(p => (
+                <button key={p.mm} onClick={() => setCardWidthMm(p.mm)} style={{ padding: '0 6px', height: '28px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: cardWidthMm === p.mm ? 'var(--accent-red)' : 'var(--bg-secondary)', color: cardWidthMm === p.mm ? '#fff' : 'var(--text-primary)', fontSize: '0.7rem' }}>{p.l}</button>
               ))}
+              <input type="number" className="tech-input" style={{ width: '48px', padding: '0.2rem 0.4rem', fontSize: '0.8rem' }} value={cardWidthMm} min={20} max={150} onChange={e => setCardWidthMm(Number(e.target.value))} />
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>mm</span>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -432,7 +464,7 @@ export default function CartesPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>BORDURE</label>
             <div style={{ display: 'flex', gap: '0.25rem' }}>
-              {[0, 1, 2, 3].map(n => (
+              {[0, 3, 4, 5].map(n => (
                 <button key={n} onClick={() => setBorderWidth(n)} style={{ width: '28px', height: '28px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: borderWidth === n ? 'var(--accent-red)' : 'var(--bg-secondary)', color: borderWidth === n ? '#fff' : 'var(--text-primary)', fontSize: '0.75rem' }}>{n === 0 ? '✕' : `${n}px`}</button>
               ))}
             </div>
