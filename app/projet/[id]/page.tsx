@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 
@@ -34,13 +34,15 @@ type ResizeHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
 
 interface TemplateLayer {
   id: string; name: string; type: LayerType; isVisible: boolean; isLocked: boolean;
-  x: number; y: number; width: number; height: number; 
+  x: number; y: number; width: number; height: number;
   content: string; color: string;
-  sourceType: SourceType; 
-  columnId: string;       
-  textAlign?: TextAlign; 
+  sourceType: SourceType;
+  columnId: string;
+  textAlign?: TextAlign;
+  fontSize?: number;
   aspectLocked?: boolean;
   groupId?: string;
+  rotation?: number;
 }
 
 interface Template {
@@ -66,6 +68,8 @@ export default function TemplateEditorTab() {
   const [templateStore, setTemplateStore] = useState<Record<string, Template>>({});
 
   const [columnsByDataset, setColumnsByDataset] = useState<Record<string, Column[]>>({});
+  const [allRowsByDataset, setAllRowsByDataset] = useState<Record<string, any[]>>({});
+  const [previewRowIndex, setPreviewRowIndex] = useState<Record<string, number>>({});
   const [previewRows, setPreviewRows] = useState<Record<string, any>>({});
 
   const [layers, setLayers] = useState<TemplateLayer[]>([]);
@@ -78,6 +82,8 @@ export default function TemplateEditorTab() {
   // PHYSIQUE & DRAG
   const [dragInfo, setDragInfo] = useState<{ initialMouseX: number; initialMouseY: number; layers: { id: string; startX: number; startY: number }[] } | null>(null);
   const [resizeInfo, setResizeInfo] = useState<{ id: string; startX: number; startY: number; startW: number; startH: number; initialMouseX: number; initialMouseY: number; handle: ResizeHandle; aspectLocked: boolean } | null>(null);
+  const [rotateInfo, setRotateInfo] = useState<{ id: string; centerX: number; centerY: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [draggedLayerIdx, setDraggedLayerIdx] = useState<number | null>(null);
   const [dragOverLayerIdx, setDragOverLayerIdx] = useState<number | null>(null);
 
@@ -95,7 +101,7 @@ export default function TemplateEditorTab() {
   const [tplModalMode, setTplModalMode] = useState<'add' | 'edit'>('add');
   const [tplFormName, setTplFormName] = useState('');
   const [activeTplToEdit, setActiveTplToEdit] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'template' | 'layer', id: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'template' | 'layer', id: string, subMenu?: 'copyTo' } | null>(null);
 
   // ==========================================
   // 1. CHARGEMENT & DB
@@ -133,14 +139,18 @@ export default function TemplateEditorTab() {
       setDatasets(loadedDatasets);
       setColumnsByDataset(loadedColumns);
 
-      const { data: cardsData } = await supabase.from('cards').select('*').eq('project_id', projectData.id);
+      const { data: cardsData } = await supabase.from('cards').select('*').eq('project_id', projectData.id).order('row_order');
       const pRows: Record<string, any> = {};
+      const allRows: Record<string, any[]> = {};
       if (cardsData) {
         cardsData.forEach(card => {
           const dsId = card.dataset_id || 'default';
-          if (!pRows[dsId]) pRows[dsId] = card.data; 
+          if (!allRows[dsId]) allRows[dsId] = [];
+          allRows[dsId].push(card.data);
+          if (!pRows[dsId]) pRows[dsId] = card.data;
         });
       }
+      setAllRowsByDataset(allRows);
       setPreviewRows(pRows);
 
       const { data: templatesData } = await supabase.from('templates').select('*').eq('project_id', projectData.id);
@@ -149,8 +159,9 @@ export default function TemplateEditorTab() {
 
       if (templatesData && templatesData.length > 0) {
         loadedTemplates = templatesData.map(t => ({ 
-          db_id: t.id, id: `tpl_${t.id}`, name: t.name, dataset_id: t.dataset_id || loadedDatasets[0].id, 
-          layers: (t.layers || []).map((l: any) => ({ ...l, sourceType: l.sourceType || 'static', columnId: l.columnId || '', textAlign: l.textAlign || 'center', aspectLocked: !!l.aspectLocked, groupId: l.groupId })) 
+          db_id: t.id, id: `tpl_${t.id}`, name: t.name, dataset_id: t.dataset_id || loadedDatasets[0].id,
+          width: t.width || 300, height: t.height || 420,
+          layers: (t.layers || []).map((l: any) => ({ ...l, sourceType: l.sourceType || 'static', columnId: l.columnId || '', textAlign: l.textAlign || 'center', aspectLocked: !!l.aspectLocked, groupId: l.groupId }))
         }));
       } else {
         const defaultTpl: Template = {
@@ -195,13 +206,13 @@ export default function TemplateEditorTab() {
       // 2. Sauvegarde des gabarits
       for (const tpl of updatedTemplates) {
         if (tpl.db_id) {
-          const { error: updErr } = await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).eq('id', tpl.db_id);
+          const { error: updErr } = await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).eq('id', tpl.db_id);
           if (updErr) {
             console.error("Erreur Update Gabarit:", updErr);
             alert("Erreur de mise à jour du gabarit : " + updErr.message);
           }
         } else {
-          const { data, error: insErr } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers }).select().single();
+          const { data, error: insErr } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).select().single();
           if (insErr) {
             console.error("Erreur Insert Gabarit:", insErr);
             alert("Erreur de création du gabarit : " + insErr.message);
@@ -252,25 +263,62 @@ export default function TemplateEditorTab() {
     }
   };
 
-  const saveTemplateDetails = (e: React.FormEvent) => {
+  const saveSingleTemplate = async (tpl: Template): Promise<string | undefined> => {
+    if (!projectId) return;
+    if (tpl.db_id) {
+      await supabase.from('templates').update({ name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).eq('id', tpl.db_id);
+      return tpl.db_id;
+    } else {
+      const { data } = await supabase.from('templates').insert({ project_id: projectId, name: tpl.name, dataset_id: tpl.dataset_id, layers: tpl.layers, width: tpl.width || 300, height: tpl.height || 420 }).select().single();
+      return data?.id;
+    }
+  };
+
+  const saveTemplateDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tplFormName.trim()) return;
     if (tplModalMode === 'add') {
       const newId = 'tpl_' + Math.random().toString(36).substring(2, 9);
-      const newTpl: Template = { id: newId, name: tplFormName, dataset_id: datasets[0]?.id || 'default', layers: [] };
-      setTemplates([...templates, newTpl]);
+      const newTpl: Template = { id: newId, name: tplFormName, dataset_id: datasets[0]?.id || 'default', layers: [], width: 300, height: 420 };
+      const dbId = await saveSingleTemplate(newTpl);
+      if (dbId) newTpl.db_id = dbId;
+      setTemplates(prev => {
+        const updated = prev.map(t => t.id === activeTemplateId ? { ...t, layers } : t);
+        return [...updated, newTpl];
+      });
       setTemplateStore(prev => {
         const store = { ...prev, [newId]: newTpl };
         if (activeTemplateId) { const currentTpl = templates.find(t => t.id === activeTemplateId); if (currentTpl) store[activeTemplateId] = { ...currentTpl, layers }; }
         return store;
       });
-      setLayers([]); setActiveTemplateId(newId); setHistory([[]]); setHistoryIndex(0); setViewMode('editor'); 
-    } 
+      setLayers([]); setActiveTemplateId(newId); setHistory([[]]); setHistoryIndex(0); setViewMode('editor');
+    }
     else if (tplModalMode === 'edit' && activeTplToEdit) {
+      const tpl = templates.find(t => t.id === activeTplToEdit);
+      if (tpl) await saveSingleTemplate({ ...tpl, name: tplFormName });
       setTemplates(templates.map(t => t.id === activeTplToEdit ? { ...t, name: tplFormName } : t));
       setTemplateStore(prev => ({ ...prev, [activeTplToEdit]: { ...prev[activeTplToEdit], name: tplFormName } }));
     }
-    setHasChanges(true); setIsTplModalOpen(false); 
+    setIsTplModalOpen(false);
+  };
+
+  const duplicateTemplate = async (targetId: string) => {
+    const original = templates.find(t => t.id === targetId);
+    if (!original) return;
+    setContextMenu(null);
+    const newId = `tpl_${Date.now()}`;
+    const clonedLayers = JSON.parse(JSON.stringify(original.layers)).map((l: TemplateLayer) => ({ ...l, id: 'l_' + Date.now() + Math.random() }));
+    const newTpl: Template = { ...original, id: newId, name: `${original.name} Copie`, db_id: undefined, layers: clonedLayers };
+    const dbId = await saveSingleTemplate(newTpl);
+    if (dbId) newTpl.db_id = dbId;
+    setTemplates(prev => [...prev, newTpl]);
+    setTemplateStore(prev => ({ ...prev, [newId]: newTpl }));
+    setHasChanges(true);
+    // Ouvrir directement le renommage
+    setActiveTplToEdit(newId);
+    setTplFormName(newTpl.name);
+    setTplModalMode('edit');
+    setIsTplModalOpen(true);
   };
 
   const deleteTemplate = (targetId: string) => {
@@ -288,7 +336,11 @@ export default function TemplateEditorTab() {
 
   const linkDataset = (datasetId: string) => {
     if (!activeTemplateId) return;
-    setTemplates(templates.map(t => t.id === activeTemplateId ? { ...t, dataset_id: datasetId } : t)); setHasChanges(true);
+    const updated = templates.map(t => t.id === activeTemplateId ? { ...t, dataset_id: datasetId } : t);
+    setTemplates(updated);
+    const tpl = updated.find(t => t.id === activeTemplateId);
+    if (tpl) saveSingleTemplate({ ...tpl, layers });
+    setHasChanges(true);
   };
 
   // ==========================================
@@ -356,6 +408,37 @@ export default function TemplateEditorTab() {
     const [item] = newLayers.splice(idx, 1);
     newLayers.push(item);
     pushHistory(newLayers);
+    setContextMenu(null);
+  };
+
+  const copyLayerTo = (layerId: string, targetTemplateId: string) => {
+    const layerToCopy = layers.find(l => l.id === layerId);
+    if (!layerToCopy) return;
+    const targetTpl = templateStore[targetTemplateId];
+    if (!targetTpl) return;
+    const copiedLayer = { ...layerToCopy, id: 'l_' + Date.now() + Math.random().toString(36).substring(2, 7), groupId: undefined };
+    const updatedTpl = { ...targetTpl, layers: [copiedLayer, ...(targetTpl.layers || [])] };
+    setTemplateStore(prev => ({ ...prev, [targetTemplateId]: updatedTpl }));
+    setTemplates(prev => prev.map(t => t.id === targetTemplateId ? updatedTpl : t));
+    setHasChanges(true);
+    setContextMenu(null);
+  };
+
+  const copyLayerToAll = (layerId: string) => {
+    const layerToCopy = layers.find(l => l.id === layerId);
+    if (!layerToCopy) return;
+    const others = templates.filter(t => t.id !== activeTemplateId);
+    if (others.length === 0) return;
+    const newStore = { ...templateStore };
+    others.forEach((tpl, i) => {
+      const targetTpl = newStore[tpl.id];
+      if (!targetTpl) return;
+      const copiedLayer = { ...layerToCopy, id: `l_${Date.now()}_${i}`, groupId: undefined };
+      newStore[tpl.id] = { ...targetTpl, layers: [copiedLayer, ...(targetTpl.layers || [])] };
+    });
+    setTemplateStore(newStore);
+    setTemplates(prev => prev.map(t => newStore[t.id] ?? t));
+    setHasChanges(true);
     setContextMenu(null);
   };
 
@@ -432,7 +515,29 @@ export default function TemplateEditorTab() {
     });
   };
 
+  const handleMouseDownOnRotateHandle = (e: React.MouseEvent, layer: TemplateLayer) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    setRotateInfo({ id: layer.id, centerX, centerY });
+  };
+
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (rotateInfo) {
+      const canvasEl = canvasRef.current;
+      if (!canvasEl) return;
+      const rect = canvasEl.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const dx = mouseX - rotateInfo.centerX;
+      const dy = mouseY - rotateInfo.centerY;
+      let angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+      if (e.shiftKey) angle = Math.round(angle / 15) * 15;
+      updateLayer(rotateInfo.id, { rotation: Math.round(angle) }, false);
+      return;
+    }
+
     if (dragInfo) {
       const dx = e.clientX - dragInfo.initialMouseX;
       const dy = e.clientY - dragInfo.initialMouseY;
@@ -501,9 +606,9 @@ export default function TemplateEditorTab() {
   };
 
   const handleCanvasMouseUp = () => {
-    if (dragInfo || resizeInfo) {
-      pushHistory(layers); 
-      setDragInfo(null); setResizeInfo(null);
+    if (dragInfo || resizeInfo || rotateInfo) {
+      pushHistory(layers);
+      setDragInfo(null); setResizeInfo(null); setRotateInfo(null);
     }
   };
 
@@ -549,13 +654,31 @@ export default function TemplateEditorTab() {
 
   const currentTemplate = templates.find(t => t.id === activeTemplateId);
   const activeDatasetCols = columnsByDataset[currentTemplate?.dataset_id || 'default'] || [];
-  const previewData = previewRows[currentTemplate?.dataset_id || 'default'];
+  const activeDatasetId = currentTemplate?.dataset_id || 'default';
+  const allCardsForDataset = allRowsByDataset[activeDatasetId] || [];
+  const currentCardIndex = previewRowIndex[activeDatasetId] ?? 0;
+  const previewData = allCardsForDataset.length > 0 ? allCardsForDataset[currentCardIndex] : previewRows[activeDatasetId];
+
+  const navigateCard = (dir: 1 | -1) => {
+    const count = allCardsForDataset.length;
+    if (count === 0) return;
+    const next = (currentCardIndex + dir + count) % count;
+    setPreviewRowIndex(prev => ({ ...prev, [activeDatasetId]: next }));
+  };
 
   const renderResizeHandles = (layer: TemplateLayer) => {
     if (activeLayerIds.length !== 1 || activeLayerIds[0] !== layer.id || layer.isLocked) return null;
     const hStyle: React.CSSProperties = { position: 'absolute', width: '8px', height: '8px', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--accent-red)', zIndex: 10 };
     return (
       <>
+        {/* Handle de rotation */}
+        <div
+          onMouseDown={(e) => handleMouseDownOnRotateHandle(e, layer)}
+          title="Pivoter (Shift = 15°)"
+          style={{ position: 'absolute', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--bg-primary)', border: '2px solid var(--accent-red)', top: -28, left: 'calc(50% - 6px)', cursor: 'grab', zIndex: 10 }}
+        />
+        {/* Ligne du handle de rotation */}
+        <div style={{ position: 'absolute', width: '1px', height: '18px', backgroundColor: 'var(--accent-red)', top: -18, left: 'calc(50% - 0.5px)', pointerEvents: 'none', zIndex: 9, opacity: 0.5 }} />
         <div onMouseDown={(e) => handleMouseDownOnHandle(e, layer, 'nw')} style={{ ...hStyle, top: -4, left: -4, cursor: 'nwse-resize' }} />
         <div onMouseDown={(e) => handleMouseDownOnHandle(e, layer, 'ne')} style={{ ...hStyle, top: -4, right: -4, cursor: 'nesw-resize' }} />
         <div onMouseDown={(e) => handleMouseDownOnHandle(e, layer, 'sw')} style={{ ...hStyle, bottom: -4, left: -4, cursor: 'nesw-resize' }} />
@@ -571,9 +694,9 @@ export default function TemplateEditorTab() {
   return (
     <div className="panel border-thin relative" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 2rem)', backgroundColor: 'var(--bg-secondary)', overflow: 'hidden' }}>
       
-      {/* COUCHE DE PROTECTION INVISIBLE (DRAG/RESIZE CALQUES) */}
-      {(dragInfo || resizeInfo) && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, cursor: dragInfo ? 'grabbing' : 'crosshair' }} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} />
+      {/* COUCHE DE PROTECTION INVISIBLE (DRAG/RESIZE/ROTATE CALQUES) */}
+      {(dragInfo || resizeInfo || rotateInfo) && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, cursor: dragInfo ? 'grabbing' : rotateInfo ? 'crosshair' : 'crosshair' }} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} />
       )}
 
       {/* HEADER FIXE */}
@@ -618,7 +741,7 @@ export default function TemplateEditorTab() {
       {viewMode === 'editor' && (
         <>
           {/* ONGLETS GABARITS */}
-          <div className="dataset-tabs-container animate-table-switch">
+          <div className="dataset-tabs-container animate-table-switch" onWheel={(e) => { e.preventDefault(); e.currentTarget.scrollLeft += e.deltaY; }}>
             <button className="dataset-tab" style={{ color: 'var(--text-primary)', marginRight: '1rem', border: '1px solid var(--border)' }} onClick={goToGrid}>[ &lt; MOSAÏQUE ]</button>
             {templates.map(tpl => (
               <button key={tpl.id} className={`dataset-tab ${activeTemplateId === tpl.id ? 'active' : ''}`} style={{ color: activeTemplateId === tpl.id ? 'var(--accent-red)' : 'var(--text-secondary)' }} onClick={() => openTemplate(tpl.id)} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type: 'template', id: tpl.id }); }}>
@@ -669,7 +792,8 @@ export default function TemplateEditorTab() {
                   backgroundColor: 'var(--bg-secondary)', overflow: 'hidden', position: 'relative', 
                   backgroundImage: 'radial-gradient(circle, var(--border) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundPosition: 'center'
                 }}>
-                  <div 
+                  <div
+                    ref={canvasRef}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleDropOnCanvas}
                     style={{ width: `${currentTemplate?.width || 300}px`, height: `${currentTemplate?.height || 420}px`, backgroundColor: '#fff', boxShadow: '0 20px 50px rgba(0,0,0,0.8)', position: 'relative', overflow: 'hidden' }}
@@ -681,8 +805,8 @@ export default function TemplateEditorTab() {
                       const isDraggingThis = dragInfo?.layers.find(l => l.id === layer.id);
 
                       let displayContent = layer.content;
-                      if (layer.type === 'text' && layer.sourceType === 'column' && layer.columnId) {
-                        displayContent = previewData && previewData[layer.columnId] !== undefined ? previewData[layer.columnId] : `[${layer.columnId.toUpperCase()}]`;
+                      if (layer.sourceType === 'column' && layer.columnId) {
+                        displayContent = previewData && previewData[layer.columnId] !== undefined && previewData[layer.columnId] !== null ? previewData[layer.columnId] : '';
                       }
 
                       const justifyContent = layer.textAlign === 'right' ? 'flex-end' : layer.textAlign === 'center' ? 'center' : 'flex-start';
@@ -695,17 +819,18 @@ export default function TemplateEditorTab() {
                           style={{
                             position: 'absolute', left: layer.x, top: layer.y, width: layer.width, height: layer.height,
                             backgroundColor: layer.type === 'shape' ? layer.color : 'transparent', color: layer.color,
-                            outline: isSelected && !isDraggingThis ? '2px solid var(--accent-red)' : 'none', 
-                            cursor: layer.isLocked ? 'default' : isDraggingThis ? 'grabbing' : 'grab', display: 'flex', alignItems: 'center', 
+                            outline: isSelected && !isDraggingThis ? '2px solid var(--accent-red)' : 'none',
+                            cursor: layer.isLocked ? 'default' : isDraggingThis ? 'grabbing' : 'grab', display: 'flex', alignItems: 'center',
                             justifyContent: layer.type === 'text' ? justifyContent : 'center', textAlign: layer.textAlign || 'left',
-                            fontFamily: 'monospace', fontWeight: 'bold', fontSize: '16px', zIndex: layers.length - index,
-                            wordBreak: 'break-word', padding: layer.type === 'text' ? '0 4px' : '0'
+                            fontFamily: 'monospace', fontWeight: 'bold', fontSize: `${layer.fontSize || 16}px`, zIndex: layers.length - index,
+                            wordBreak: 'break-word', padding: layer.type === 'text' ? '0 4px' : '0',
+                            transform: `rotate(${layer.rotation || 0}deg)`, transformOrigin: 'center center',
                           }}
                         >
                           {renderResizeHandles(layer)}
                           {layer.type === 'text' && <span style={{ pointerEvents: 'none' }}>{displayContent}</span>}
-                          {layer.type === 'image' && (
-                            <img src={`https://api.iconify.design/${layer.content}.svg?color=${encodeURIComponent(layer.color)}`} alt="icon" style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} draggable="false" />
+                          {layer.type === 'image' && displayContent && (
+                            <img src={`https://api.iconify.design/${displayContent}.svg?color=${encodeURIComponent(layer.color)}`} alt="icon" style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} draggable="false" />
                           )}
                         </div>
                       );
@@ -713,6 +838,17 @@ export default function TemplateEditorTab() {
                     <div style={{ position: 'absolute', inset: '15px', border: '1px dashed rgba(255,0,0,0.3)', pointerEvents: 'none', zIndex: 1000 }} />
                   </div>
                 </div>
+
+                {/* Défileur de cartes */}
+                {allCardsForDataset.length > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '0.5rem', borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg-secondary)', flexShrink: 0 }}>
+                    <button onClick={(e) => { e.stopPropagation(); navigateCard(-1); }} style={{ padding: '0.2rem 0.7rem', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1rem' }}>‹</button>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                      CARTE {currentCardIndex + 1} / {allCardsForDataset.length}
+                    </span>
+                    <button onClick={(e) => { e.stopPropagation(); navigateCard(1); }} style={{ padding: '0.2rem 0.7rem', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1rem' }}>›</button>
+                  </div>
+                )}
               </div>
 
               {/* --- PANNEAU INSPECTEUR & CALQUES (LARGEUR FIXE 320px) --- */}
@@ -786,6 +922,59 @@ export default function TemplateEditorTab() {
                         </div>
                       </div>
 
+                      {/* IMAGE SELECTION */}
+                      {activeLayer.type === 'image' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', padding: '0.8rem', border: '1px solid var(--border)', backgroundColor: 'var(--bg-primary)' }}>
+                          <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Source des données</Txt></label>
+
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button onClick={() => updateLayer(activeLayer.id, { sourceType: 'static' })} style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.sourceType === 'static' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.sourceType === 'static' ? '#fff' : 'var(--text-primary)' }}>STATIQUE</button>
+                            <button onClick={() => updateLayer(activeLayer.id, { sourceType: 'column' })} style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.sourceType === 'column' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.sourceType === 'column' ? '#fff' : 'var(--text-primary)' }}>BDD</button>
+                          </div>
+
+                          {activeLayer.sourceType === 'column' ? (
+                            <select className="tech-input" style={{ width: '100%', fontSize: '0.9rem' }} value={activeLayer.columnId || ''} onChange={(e) => updateLayer(activeLayer.id, { columnId: e.target.value })}>
+                              <option value="">-- Choisir une colonne --</option>
+                              {activeDatasetCols.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <>
+                              <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Icône</Txt></label>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                                <div style={{ width: '48px', height: '48px', background: '#fff', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {activeLayer.content ? (
+                                    <img src={`https://api.iconify.design/${activeLayer.content}.svg?color=${encodeURIComponent(activeLayer.color)}`} alt="preview" style={{ width: '80%', height: '80%', objectFit: 'contain' }} />
+                                  ) : (
+                                    <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>?</span>
+                                  )}
+                                </div>
+                                <input type="text" className="tech-input" style={{ flex: 1, fontSize: '0.8rem' }} value={activeLayer.content} onChange={(e) => updateLayer(activeLayer.id, { content: e.target.value })} placeholder="mdi:skull" />
+                              </div>
+
+                              {savedIcons.length > 0 && (
+                                <>
+                                  <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}><Txt>Favoris</Txt></label>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.3rem', maxHeight: '110px', overflowY: 'auto' }}>
+                                    {savedIcons.map(iconName => (
+                                      <div
+                                        key={iconName}
+                                        onClick={() => updateLayer(activeLayer.id, { content: iconName })}
+                                        style={{ aspectRatio: '1/1', background: '#fff', border: `2px solid ${activeLayer.content === iconName ? 'var(--accent-red)' : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                                        title={iconName}
+                                      >
+                                        <img src={`https://api.iconify.design/${iconName}.svg`} alt={iconName} style={{ width: '70%', height: '70%', objectFit: 'contain', pointerEvents: 'none' }} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+
                       {/* DATA BINDING */}
                       {activeLayer.type === 'text' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', padding: '0.8rem', border: '1px solid var(--border)', backgroundColor: 'var(--bg-primary)' }}>
@@ -807,7 +996,7 @@ export default function TemplateEditorTab() {
                             <input type="text" className="tech-input" style={{ width: '100%', fontSize: '0.9rem', marginTop: '0.5rem' }} value={activeLayer.content} onChange={(e) => updateLayer(activeLayer.id, { content: e.target.value })} placeholder="Texte libre..." />
                           )}
                           
-                          {/* Alignement Texte */}
+                          {/* Alignement & Taille police */}
                           <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Alignement</Txt></label>
                             <div style={{ display: 'flex', gap: '0.3rem' }}>
@@ -816,8 +1005,23 @@ export default function TemplateEditorTab() {
                               <button onClick={() => updateLayer(activeLayer.id, { textAlign: 'right' })} style={{ width: '30px', height: '30px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: activeLayer.textAlign === 'right' ? 'var(--accent-red)' : 'var(--bg-secondary)', color: activeLayer.textAlign === 'right' ? '#fff' : 'var(--text-primary)' }}>[R]</button>
                             </div>
                           </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}><Txt>Taille police</Txt></label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                              <button onClick={() => updateLayer(activeLayer.id, { fontSize: Math.max(6, (activeLayer.fontSize || 16) - 1) })} style={{ width: '24px', height: '24px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                              <input type="number" className="tech-input" style={{ width: '52px', fontSize: '0.9rem', textAlign: 'center' }} value={activeLayer.fontSize || 16} min={6} max={200} onChange={(e) => updateLayer(activeLayer.id, { fontSize: Math.max(6, parseInt(e.target.value) || 16) })} />
+                              <button onClick={() => updateLayer(activeLayer.id, { fontSize: (activeLayer.fontSize || 16) + 1 })} style={{ width: '24px', height: '24px', border: '1px solid var(--border)', cursor: 'pointer', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                            </div>
+                          </div>
                         </div>
                       )}
+
+                      {/* Rotation */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Rotation (°)</label>
+                        <input type="number" className="tech-input" style={{ width: '70px', fontSize: '0.9rem' }} value={activeLayer.rotation || 0} min={-360} max={360} onChange={(e) => updateLayer(activeLayer.id, { rotation: parseInt(e.target.value) || 0 })} />
+                        <button onClick={() => updateLayer(activeLayer.id, { rotation: 0 })} style={{ padding: '0 8px', height: '32px', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>↺ RESET</button>
+                      </div>
 
                       {/* Coordonnées & Lock Ratio */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', alignItems: 'center' }}>
@@ -911,12 +1115,33 @@ export default function TemplateEditorTab() {
 
       {/* MENUS CONTEXTUELS COMBINÉS (Gabarit / Calque) */}
       {contextMenu && (
-        <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }}>
+        <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()}>
           {contextMenu.type === 'template' ? (
             <>
               <div className="context-menu-label">// GABARIT</div>
               <div className="context-menu-item" onClick={() => { setActiveTplToEdit(contextMenu.id); setTplFormName(templates.find(t=>t.id===contextMenu.id)?.name || ''); setTplModalMode('edit'); setIsTplModalOpen(true); setContextMenu(null); }}>[ MODIFIER ]</div>
+              <div className="context-menu-item" onClick={() => duplicateTemplate(contextMenu.id)}>[ DUPLIQUER ]</div>
+              <div className="context-menu-divider" />
               <div className="context-menu-item" style={{ color: 'var(--accent-red)' }} onClick={() => deleteTemplate(contextMenu.id)}>[X] SUPPRIMER</div>
+            </>
+          ) : contextMenu.subMenu === 'copyTo' ? (
+            <>
+              <div className="context-menu-label">// COPIER VERS</div>
+              <div className="context-menu-item" onClick={() => setContextMenu({ ...contextMenu, subMenu: undefined })}>← RETOUR</div>
+              <div className="context-menu-divider" />
+              {templates.filter(t => t.id !== activeTemplateId).length === 0 ? (
+                <div className="context-menu-item" style={{ opacity: 0.5, cursor: 'default' }}>Aucun autre gabarit</div>
+              ) : (
+                <>
+                  <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                    {templates.filter(t => t.id !== activeTemplateId).map(t => (
+                      <div key={t.id} className="context-menu-item" onClick={() => copyLayerTo(contextMenu.id, t.id)}>[ {t.name} ]</div>
+                    ))}
+                  </div>
+                  <div className="context-menu-divider" />
+                  <div className="context-menu-item" style={{ color: 'var(--accent-red)' }} onClick={() => copyLayerToAll(contextMenu.id)}>[ VERS TOUS ]</div>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -931,6 +1156,8 @@ export default function TemplateEditorTab() {
               <div className="context-menu-item" onClick={() => moveLayerToBack(contextMenu.id)}>[ ARRIÈRE_PLAN ]</div>
               <div className="context-menu-divider" />
               <div className="context-menu-item" onClick={() => duplicateLayer(contextMenu.id)}>[ DUPLIQUER ]</div>
+              <div className="context-menu-item" onClick={() => setContextMenu({ ...contextMenu, subMenu: 'copyTo' })}>[ COPIER VERS → ]</div>
+              <div className="context-menu-divider" />
               <div className="context-menu-item" style={{ color: 'var(--accent-red)' }} onClick={() => deleteLayer(contextMenu.id)}>[X] SUPPRIMER</div>
             </>
           )}
